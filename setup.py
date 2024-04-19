@@ -8,10 +8,9 @@ Created on Mon Jan 22 11:08:26 2024
 #####################################################
 ### SETTING UP WORKING DIRECTORY AND CONFIG FILES ###
 #####################################################
-
 # Ensure you save the code to a desired file directory as all folders and outputs are created/outputed relative to this path.
 # Save metadata to this working directory (wd). Follow the template csv (ensure the excel sheet is saved as a comma delimited file).
-# Also save raw data file path as "raw_data.txt" to the wd.
+
 
 # Importing modules
 import os
