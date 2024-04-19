@@ -183,8 +183,7 @@ def prepare_data(df, intentype=None, nld=nld):
     ### The Master Time ###
     """
     Master Time creates a time series from first data point to last data point with
-    every hour created. This is to remedy the gaps in the data and allow mapping 
-    between CRNS data and ERA5_Land variables.
+    every hour created. This is to remedy the gaps in the data.
     
     DateTime is standardised to be on the hour (using floor). This can create issues
     with "duplicated" data points, usually when errors in logging have created data
@@ -277,7 +276,7 @@ raw_data.to_csv(output_tidy_path, index=False, header=True, sep='\t')
 #~~~~~~~~~ NMDB DATA (JUNG STATION) ~~~~~~~~~~#
 
 def nmdb_get(startdate, enddate, station="JUNG", nld=nld):
-    """nmdb_get will collect data for Junfraujoch station that is required to calculate fsol.
+    """nmdb_get will collect data for Junfraujoch station that is required to calculate f_intensity.
     Returns a dictionary that can be used to fill in values to the main dataframe
     of each site.
 
