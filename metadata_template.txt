@@ -1,0 +1,20 @@
+variable value
+country
+sitenum
+site_name
+install_date
+latitude
+longitude
+elev
+timezone
+rc
+lw
+soc
+bd
+n0
+agbweight 
+beta_coeff
+reference_press
+raw_data_filepath
+max_precipitation 
+sm_max 
