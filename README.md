@@ -18,7 +18,7 @@ Joe Wagstaff
 
 * Save the three python scripts to a desired file directory. Note that all files and figures will be outputted from this directory.
 
-* Save a copy of the site metadata either as a .csv (comma-delimited) file or .txt file to the working directory and name it **metadata.csv** or **metadata.txt** respectively. Note that both need to follow their respective format given by **metadata_template.csv** and **metadata_template.txt**.
+* Save a copy of the site metadata either as a .csv (comma-delimited) file or .txt file to the working directory and name it **metadata.csv** or **metadata.txt** respectively. Note that both need to follow their respective format given in the **metadata_templates** file.
 
 * Full info on the metadata input is given [here](https://github.com/Joe-Wagstaff/CRSPY_lite/wiki/Metadata-Input)
 
