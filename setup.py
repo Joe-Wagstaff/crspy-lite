@@ -146,9 +146,7 @@ create_config_file(wd)
 
 '''
      Please note some general definitions may need adjusting in the config file:
-         
-         site_raw_data : input file path of site raw data.
-         
+     
          jung_ref : currently set at 159 for Junfraujoch station. 
          
 '''       
