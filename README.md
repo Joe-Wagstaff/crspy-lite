@@ -20,7 +20,7 @@ Joe Wagstaff
 
 * Save a copy of the site metadata either as a .csv (comma-delimited) file or .txt file to the working directory and name it **metadata.csv** or **metadata.txt** respectively. Note that both need to follow their respective format given by **metadata_template.csv** and **metadata_template.txt**.
 
-* Note that the metadata variable 'AGBWEIGHT', used to compute the static biomass correction defined by Baatz et al. (2015), is not used in the current version of CRSPY_lite. Also note the other unessential inputs 'MAX_PRECIPITATION’, and ‘SM_MAX' which can be modified by the user to improve the visualisation of the figures.
+* Full info on the metadata input is given [here](https://github.com/Joe-Wagstaff/CRSPY_lite/wiki/Metadata-Input)
 
 **setup.py**
 
