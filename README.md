@@ -7,6 +7,8 @@ Joe Wagstaff
 **About this package:**
 
 * This code can be used for single site Cosmic-Ray Neutron Sensor (CRNS) data processing. It computes **S**oil **M**oisture (**SM**) estimates from raw neutron counts detected by the sensors. The code requires the input of raw site data and a list of metadata variables.
+
+* The package simplifies the multi-site CRNS data processing tool CRSPY created by Power et al. (2021), for single site CRNS data processing (see> https://github.com/danpower101/crspy).
  
 * Functions contain a description of what they do and the parameters they involve. Additional information on the code is added with comments (#).
 
