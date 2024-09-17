@@ -6,7 +6,6 @@ Created on Mon Jan 22 10:16:00 2024
 """
 
 #import modules
-import crspy 
 import pandas as pd
 from configparser import RawConfigParser
 import os
@@ -1149,7 +1148,7 @@ def thetaprocess(df, country, sitenum, nld=nld):
 final_sm_data = thetaprocess(df=qa_data, country=nld['metadata']['country'],
                      sitenum=nld['metadata']['sitenum'],nld=nld)
 
-final_sm_data.to_csv(wd+"/outputs/data/"+nld['metadata']['country']+"_SITE_"+nld['metadata']['country']+"_final.txt", 
+final_sm_data.to_csv(wd+"/outputs/data/"+nld['metadata']['country']+"_SITE_"+nld['metadata']['sitenum']+"_final.txt", 
                   header=True, index=False, sep="\t")
 
 
