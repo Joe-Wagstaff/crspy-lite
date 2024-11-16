@@ -268,6 +268,10 @@ def process_data():
                                calib_end_time="17:00:00",
                                config_data=config_data)
                 N0 = config_data['metadata']['n0']
+                #save calibration data filepath to config file
+                config_data['filepaths']['calib_data_filepath'] = calib_data_filepath
+                with open(config_file, "w") as file:
+                    json.dump(config_data, file, indent=4)
         
             else:
                 print("Calibration data NOT detected.")
@@ -282,6 +286,10 @@ def process_data():
                                calib_end_time="17:00:00",
                                config_data=config_data)
                     N0 = config_data['metadata']['n0']
+                    #save calibration data filepath to config file
+                    config_data['filepaths']['calib_data_filepath'] = calib_data_filepath
+                    with open(config_file, "w") as file:
+                        json.dump(config_data, file, indent=4)
 
                 except FileNotFoundError:
                     print("Calibration filepath invalid. Please check the input is correct.")
