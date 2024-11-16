@@ -1,4 +1,8 @@
+"""
+@author: Joe Wagstaff
+@institution: University of Bristol
 
+"""
 
 import os
 import json
