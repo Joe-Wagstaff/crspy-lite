@@ -33,7 +33,7 @@ Cosmic-Ray neutron Sensor PYthon tool - lite edition.
 
 * This script imports the final dataframe from the previous script and includes code for a range of different figures. Toggle the Boolean statements where the figure functions are called to choose whether to output a particular figure or not.
 * The recomended figures to output are ```site_features``` which includes subplots for temperature, precpitation and SM (including an estimated error) and ```typical_year``` which averages the data to compute an average year of SM. Note that for an accurate representation, several years of data are required.
-* Another optional figure is ```crspy_comparison_plt``` which plots the CRSPY_lite output against the output from the multi-site CRNS data processing python tool, **crpsy** (see> https://github.com/danpower101/crspy). This can be used to compare the two tools.
+* Another optional figure is ```crspy_comparison_plt``` which plots the **crspy_lite** output against the output from the multi-site CRNS data processing python tool, **crpsy** (see> https://github.com/danpower101/crspy). This can be used to compare the two tools.
 
 
 
