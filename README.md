@@ -2,34 +2,31 @@
 
 Cosmic-Ray neutron Sensor PYthon tool - lite edition.
 
-Joe Wagstaff
+@author: Joe Wagstaff
+@institution: University of Bristol
 
-**About this package:**
+**About this tool:**
 
-* This code can be used for single site Cosmic-Ray Neutron Sensor (CRNS) data processing. It computes **S**oil **M**oisture (**SM**) estimates from raw neutron counts detected by the sensors. The code requires the input of raw site data and a list of metadata variables.
+* This tool can be used for single site Cosmic-Ray Neutron Sensor (CRNS) data processing. It computes **S**oil **M**oisture (**SM**) estimates from raw neutron counts detected by the sensors.
 
-* The package simplifies the multi-site CRNS data processing tool CRSPY created by Power et al. (2021), for single site CRNS data processing (see> https://github.com/danpower101/crspy).
- 
-* Functions contain a description of what they do and the parameters they involve. Additional information on the code is added with comments (#).
+* The tool has been created from the multi-site CRNS data processing tool *crpsy* Power et al. (2021), for single site CRNS data processing (see> https://github.com/danpower101/crspy).
 
-* The scipts must be run in the following order: 'setup.py', 'raw_to_theta.py' and then 'figures_code' for the graphical outputs.
+* User-friendliness was the primary focus behind the creation of *crspy-lite*. It is intended to make CRNS data processing and analysis as easy as possible.
 
+* To run the tool simply run the *full_process_wrapper.py* script. Follow the user prompts in your terminal to process the CRNS data for your site. 
+
+* All data processing functions are stored in *processing_functions.py*. All functions contain a description of what they do and the parameters they involve. References are also given for users 
+  who wish to explore the processing steps and understand them further.  Additional information on the code is then added with comments (#).
+
+* *figures.py* can then be run to output some graphical figures. This is expected to be updated in the near future.
+  
  **Before running:** 
 
-* Save the three python scripts to a desired file directory. Note that all files and figures will be outputted from this directory.
+* Save the python scripts to a desired file directory. Note that all files and figures will be outputted from the working directory.
 
-* Save a copy of the site metadata either as a .csv (comma-delimited) file or .txt file to the working directory and name it **metadata.csv** or **metadata.txt** respectively. Note that both need to follow their respective format given in the **metadata_templates** file.
+* Ensure you have the relevent metadata variables for your site. *crspy-lite* will ask for these to be inputted in the terminal when run. Full infomation on the metadata input requirements is 
+  given [here](https://github.com/Joe-Wagstaff/CRSPY_lite/wiki/Metadata-Input)
 
-* Full info on the metadata input is given [here](https://github.com/Joe-Wagstaff/CRSPY_lite/wiki/Metadata-Input)
-
-**setup.py**
-
-* This script establishes the working directory, creates the file structure and creates a config.ini file. The config.ini file contains general variables required for the processing, variables from the inputted metadata file and filepaths of the working directory and raw data.
-
-**raw_to_theta.py**
-
-* This script contains the full CRNS data processing procedure from the raw neutron counts detected by the sensor to SM estimates.
-* The data is outputted at several key processing stages. These include: the tidyed data, the level 1 (or fully corrected) data, the quality-controlled data and the final dataframe containing the SM estimates.
 
 **figures_code.py**
 
