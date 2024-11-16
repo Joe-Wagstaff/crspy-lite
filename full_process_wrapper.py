@@ -35,7 +35,7 @@ if sys.version_info < python_version:
 def process_data():
 
     '''Full process wrapper of the data processing for crspy-lite. 
-        The wrapper is divided into 7 sections which correspond to the same 7 processing sections in "functions.py" 
+        The wrapper is divided into 7 sections which correspond to the same 7 processing sections in "processing_functions.py" 
     
     '''
 
