@@ -1,4 +1,4 @@
-# **CRSPY_lite**.
+# **crspy_lite**.
 
 Cosmic-Ray neutron Sensor PYthon tool - lite edition.
 
