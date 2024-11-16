@@ -1,9 +1,5 @@
 
 
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-#~~ (1) SETTING UP WORKING DIRECTORY AND CONFIG FILE ~~#
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-
 import os
 import json
 import pandas as pd
@@ -19,6 +15,10 @@ from selenium.webdriver.common.by import By
 import math
 import matplotlib.pyplot as plt
 import warnings
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+#~~ (1) SETTING UP WORKING DIRECTORY AND CONFIG FILE ~~#
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
 def initial(wd):
     
