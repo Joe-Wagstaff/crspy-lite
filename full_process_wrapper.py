@@ -59,7 +59,7 @@ def process_data():
     else:
         print("config.json already exists. Skipping config file creation.")
 
-    print("Variables can be edited by opening the config.json manually by opening the config.json file and saving your changes.")
+    print("Variables can be edited manually by opening the config.json file and saving your changes.")
     
     #open config file
     try:
@@ -88,11 +88,11 @@ def process_data():
 
     #optional resampling function 
     while True:
-        response = input("Does the input data need to be resampled to hourly time intevals? (y/n): ").strip().lower()
+        response = input("Does the input data need to be resampled to hourly time intevals? (y/n) [y is default]: ").strip().lower()
         
         if response == 'y':
             print("Resampling dataframe...")
-            resampled_df = resample_to_hourly(df=raw_data)
+            resampled_df = resample_to_hourly(df=raw_data, config_data=config_data, wd=wd)
             resampled_df.reset_index(drop=True, inplace=True) #reseting index
             raw_data = resampled_df
             print("Done.")
@@ -113,9 +113,8 @@ def process_data():
     output_tidy_path = wd+"/outputs/data/"+config_data['metadata']['country']+"_SITE_"+config_data['metadata']['sitenum']+"_tidy.txt"
     raw_data.to_csv(output_tidy_path, index=False, header=True, sep='\t')
 
-    #assign df as tidy data for next processing steps
+    #rename df as tidy data for next processing steps
     tidy_data = raw_data
-
 
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
     #~~ (3) DATA IMPORTS & CALCULATION ~~# 
@@ -135,7 +134,7 @@ def process_data():
     enddate = Jung_df_times['DATE'].iloc[-1]
 
     #calling nmdb_get function
-    nmdb_get(startdate, enddate, station="JUNG", wd=wd, config_data=config_data)
+    nmdb_get(startdate, enddate, station="JUNG", wd=wd)
 
     #reading nmdb data
     nmdb_data_path = wd+"/outputs/nmdb_outputs/nmdb_tmp.txt"
@@ -150,15 +149,23 @@ def process_data():
     moved_column = tidy_data.pop(column_to_move)
     tidy_data[column_to_move] = moved_column
 
+    
     #~~~~~~~ CUT-OFF RIGIDITY CALC~~~~~~~#
 
-    Rc = rc_retrieval(wd, config_data)
+    #check to see if the user inputted a value. Otherwise calculate using betacoeff function.
+    if config_data['metadata']['rc'] is None:
+        
+        Rc = rc_retrieval(lat=config_data['metadata']['latitude'], lon=config_data['metadata']['longitude'], wd=wd)
 
-    
+    else:
+        Rc = float(config_data['metadata']['rc'])
+        print("Cut off rigidity aquired from metadata.")
+
+
     #~~~~~~~ BETA COEFFICIENT CALC ~~~~~~~#
     
     #check to see if the user inputted a value. Otherwise calculate using betacoeff function.
-    if config_data['metadata']['betacoeff'] is None:
+    if config_data['metadata']['beta_coeff'] is None:
         
         beta_coeff, x0 = betacoeff(lat=float(config_data['metadata']['latitude']),
                             elev=float(config_data['metadata']['elev']),
@@ -168,7 +175,7 @@ def process_data():
         )
 
     else:
-        beta_coeff = config_data['metadata']['betacoeff']
+        beta_coeff = config_data['metadata']['beta_coeff']
         print("Beta coefficient aquired from metadata.")
 
 
@@ -183,7 +190,7 @@ def process_data():
     RH = tidy_data['E_RH']  #taking humidity column (%)
 
     #pressure correction.
-    f_p = pressfact_B(press = tidy_data['PRESS'] , B = float(config_data['metadata']['beta_coeff']), 
+    f_p = pressfact_B(press = tidy_data['PRESS'] , B = float(beta_coeff), 
                   p0 = float(config_data['metadata']['reference_press']))
     
     #humidity
@@ -274,8 +281,13 @@ def process_data():
                                defineaccuracy=0.01, 
                                calib_start_time="09:00:00",
                                calib_end_time="17:00:00",
-                               config_data=config_data)
+                               config_data=config_data,
+                               calib_data_filepath=calib_data_filepath)
                 N0 = config_data['metadata']['n0']
+                #save calibration data filepath to config file
+                config_data['filepaths']['calib_data_filepath'] = calib_data_filepath
+                with open(config_file, "w") as file:
+                    json.dump(config_data, file, indent=4)
         
             else:
                 print("Calibration data NOT detected.")
@@ -288,7 +300,8 @@ def process_data():
                                defineaccuracy=0.01, 
                                calib_start_time="09:00:00",
                                calib_end_time="17:00:00",
-                               config_data=config_data)
+                               config_data=config_data,
+                               calib_data_filepath=calib_data_filepath)
                     N0 = config_data['metadata']['n0']
                     #save calibration data filepath to config file
                     config_data['filepaths']['calib_data_filepath'] = calib_data_filepath
@@ -310,7 +323,7 @@ def process_data():
 
     #quality control checks applied to level 1 df. See 'flag_and_remove' function for more detail on what is defined as eroneous data
     print("Performing quality control checks on corrected neutron counts...")
-    qa_data = flag_and_remove(df=level_1_data, N0=N0, 
+    qa_data = flag_and_remove(df=level_1_data, N0=int(N0), 
                country=str(config_data['metadata']['country']), 
                sitenum=str(config_data['metadata']['sitenum']), config_data=config_data)
 
@@ -325,7 +338,7 @@ def process_data():
     print("Ready to calculate soil moisture")
     
     while True:
-        response = input(f"{"Do you want to estimate soil moisture using the 'desilets' [standard] method or the 'kohli' method? (d/k): "}").strip().lower()
+        response = input(f"{"Do you want to estimate soil moisture using the 'desilets' [default] method or the 'kohli' method? (d/k): "}").strip().lower()
         
         if response == 'd':
             print("Estimating soil moisture using the desilets method...")
@@ -351,9 +364,26 @@ def process_data():
     ### END OF DATA PROCESSING ###
     print("Data processing complete! Go to 'outputs' folder to view processed data.")
 
-
-
     
-#
-process_data()
+#~~~~~ CALLING FUNCTION ~~~~~~#
+
+print("Welcome to crspy-lite!")
+print("crspy-lite is a python tool for single site CRNS soil moisture estimation and site visualisation.")
+print("Follow the steps along in the terminal. If you are unsure about what to do select the [default] optional or go to ... to learn more.")
+
+while True:
+    response = input(f'{"Would you like to process CRNS data? (y/n):"}')
+
+    if response == 'y':
+        print("Beginning data processing...")
+        process_data()
+        break
+
+    elif response == 'n':
+        print("Skipping processing steps.")
+        break
+
+    else: print("Invalid input. Please enter 'y' or 'n'. ")
+        
+
 
