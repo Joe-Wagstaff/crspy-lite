@@ -21,6 +21,7 @@ from processing_functions import pressfact_B, es, rh, ea, dew2vap, pv, humfact, 
 from processing_functions import n0_calibration #(5)
 from processing_functions import flag_and_remove # (6)
 from processing_functions import thetaprocess # (7)
+#import processing_functions as pf
 
 # Check user Python version
 python_version = (3, 7)  # tuple of (major, minor) version requirement
@@ -251,7 +252,7 @@ def process_data():
             #check if n0 exists in metadata
             try: 
                 if config_data['metadata']['n0'] is None:
-                    N0 = input(f"{"Please input N0 number"}: ").strip()
+                    N0 = input(f"Please input N0 number: ").strip()
                     config_data['metadata']['n0'] = N0
                     #save n0 input to config file
                     with open(config_file, "w") as file:
@@ -262,7 +263,7 @@ def process_data():
                     N0 = config_data['metadata']['n0']
                     print("Successfully aquired. N0 = "+str(N0))
             except:
-                    N0 = input(f"{"Please input N0 number"}: ").strip()
+                    N0 = input(f"Please input N0 number: ").strip()
                     config_data['metadata']['n0'] = N0
                     #save n0 input to config file
                     with open(config_file, "w") as file:
@@ -291,7 +292,7 @@ def process_data():
         
             else:
                 print("Calibration data NOT detected.")
-                calib_data_filepath = input(f"{"Please input calibration data filepath"}: ").strip('"') 
+                calib_data_filepath = input(f"Please input calibration data filepath: ").strip('"') 
                 try:
                     os.path.exists(calib_data_filepath) #does the users filepath exist
                     print("Calibration data detected. Calibrating site... ")
@@ -338,7 +339,7 @@ def process_data():
     print("Ready to calculate soil moisture")
     
     while True:
-        response = input(f"{"Do you want to estimate soil moisture using the 'desilets' [default] method or the 'kohli' method? (d/k): "}").strip().lower()
+        response = input(f"Do you want to estimate soil moisture using the 'desilets' [default] method or the 'kohli' method? (d/k): ").strip().lower()
         
         if response == 'd':
             print("Estimating soil moisture using the desilets method...")
@@ -372,7 +373,7 @@ print("crspy-lite is a python tool for single site CRNS soil moisture estimation
 print("Follow the steps along in the terminal. If you are unsure about what to do select the [default] optional or go to ... to learn more.")
 
 while True:
-    response = input(f'{"Would you like to process CRNS data? (y/n):"}')
+    response = input(f"Would you like to process CRNS data? (y/n):")
 
     if response == 'y':
         print("Beginning data processing...")
@@ -386,4 +387,7 @@ while True:
     else: print("Invalid input. Please enter 'y' or 'n'. ")
         
 
+
+
+        
 
