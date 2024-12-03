@@ -1,21 +1,26 @@
 
 
+"""
+@author: Joe Wagstaff
+@institution: University of Bristol
+
+"""
+
+#general imports
+
 import os
 import json
 import pandas as pd
 import numpy as np
 import datetime
-import urllib
+import urllib.request
 from bs4 import BeautifulSoup
-
-import re
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-
 import math
 import matplotlib.pyplot as plt
-import warnings
+from scipy.interpolate import griddata
 
+#crspy-lite imports
+import data
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
@@ -170,7 +175,7 @@ def create_config_file(wd):
 #~~ (2) RAW DATA TIDYING ~~#
 #~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
-def resample_to_hourly(df):
+def resample_to_hourly(df, config_data, wd):
 
     """
     Resamples input data to hourly intervals
@@ -180,6 +185,7 @@ def resample_to_hourly(df):
 
     df : dataframe  
         dataframe to reformat
+    
     """
     
     df['TIME'] = pd.to_datetime(df['TIME'], dayfirst=True)
@@ -200,6 +206,9 @@ def resample_to_hourly(df):
     df_resampled.reset_index(inplace=True)
 
     df_resampled = df_resampled.round(2)
+
+    output_tidy_path = wd+"/outputs/data/"+config_data['metadata']['country']+"_SITE_"+config_data['metadata']['sitenum']+"_resampled.txt"
+    df_resampled.to_csv(output_tidy_path, index=False, header=True, sep='\t')
     
     return df_resampled
         
@@ -374,7 +383,7 @@ def prepare_data(df, config_data):
 #~~~~~~~~~~~~~~~~~~~~~~#
 
 #~~~ NMDB data import ~~~#
-def nmdb_get(startdate, enddate, station, wd, config_data):
+def nmdb_get(startdate, enddate, station, wd):
     """nmdb_get will collect data for Junfraujoch station that is required to calculate f_intensity.
     Returns a dictionary that can be used to fill in values to the main dataframe
     of each site.
@@ -432,172 +441,68 @@ def nmdb_get(startdate, enddate, station, wd, config_data):
 
 
 #~~~~~~~ CUT-OFF RIGIDITY CALC~~~~~~~#
-def rc_webscrape(wd, config_data):
-    
-    ''' Webscrapes cut off rigidity from crnslab.org. This is done using selenium which requires a web driver to interface with the chosen browser.
-        Here it's coded for google chrome so ensure the relevent chromedriver (for your edition of chrome) is installed and saved in the same file as this python code.
-        Otherwise please visit crnslab.org and retrieve an Rc value manually, then edit the namelist for it to be applied in the code. 
-        Ensure units for Rc are GV.
-    
+def rc_retrieval(lat, lon, wd):
+    """Function to estimate the approximate cutoff rigidity for any point on Earth according to the
+    tabulated data of Smart and Shea, 2019. The returned value can be used to select the appropriate
+    neutron monitor station to estimate the cosmic-ray neutron intensity at the location of interest.
+
     Parameters
     ----------
-    
-    nld : dictionary
-        nld should be defined in the main script (from name_list import nld), this will be the name_list.py dictionary. 
-        This will store variables such as the wd and other global vars
-        
+    lat: float
+        Geographic latitude in decimal degrees. Value in range -90 to 90
+    lon: float
+        Geographic longitude in decimal degrees. Values in range from 0 to 360.
+        Typical negative longitudes in the west hemisphere will fall in the range 180 to 360.
+    wd: str
+        Working directory
+
     Returns
     -------
-    
-        Rc: float
-            cut off rigidity (GV)
-            
-    '''
-    
-    latitude = float(config_data['metadata']['latitude'])
-    if not -90 <= latitude <= 90:
-        raise ValueError('Latitude value from metadata invalid to calculate Rc from crnslab.org. Must be between -90 and 90')
-    
-    longitude = float(config_data['metadata']['longitude'])
-    if not 0 <= longitude <= 360:
-        raise ValueError('Longitude value from metadata invalid to calculate Rc from crnslab.org. Must be between 0 and 360')
-    
-    install_date = str(config_data['metadata']['install_date'])
-    day_month_year = install_date.split('/')
-    year = int(day_month_year[2])
-    if not 1900 <= year <= 2025:
-        raise ValueError('Year of installation from metadata invalid to calculate Rc from crnslab.org. Must be between 1900 and 2025')
-    
-    url = "https://crnslab.org/util/rigidity.php"
-    driver = webdriver.Chrome()
-    driver.get(url)
-    
-    # Finding the input elements.
-    latitude_input = driver.find_element(By.XPATH,'//*[@id="body"]/table/tbody/tr[1]/td[2]/div/input')  
-    longitude_input = driver.find_element(By.XPATH,'//*[@id="body"]/table/tbody/tr[2]/td[2]/div/input')
-    year_input = driver.find_element(By.XPATH,'//*[@id="body"]/table/tbody/tr[3]/td[2]/div/input')
-    
-    # Clearing any keys present in elements.
-    latitude_input.clear()
-    longitude_input.clear()
-    year_input.clear()
-    
-    # Setting values.
-    latitude_input.send_keys(latitude)
-    longitude_input.send_keys(longitude)
-    year_input.send_keys(year)
+        (float): Cutoff rigidity in GV. Error is about +/- 0.3 GV
 
-    # Finding calculate button element and perform a click.
-    calculate_button = driver.find_element(By.XPATH,'//*[@id="body"]/div[2]/input')  
-    calculate_button.click()
+    References
+    ----------
+        Hawdon, A., McJannet, D., & Wallace, J. (2014). Calibration and correction procedures
+        for cosmic‐ray neutron soil moisture probes located across Australia. Water Resources Research,
+        50(6), 5029-5043.
+
+        Smart, D. & Shea, Matthew. (2001). Geomagnetic Cutoff Rigidity Computer Program:
+        Theory, Software Description and Example. NASA STI/Recon Technical Report N.
+
+        Shea, M. A., & Smart, D. F. (2019, July). Re-examination of the First Five Ground-Level Events.
+        In International Cosmic Ray Conference (ICRC2019) (Vol. 36, p. 1149).
+    """
+
+    print("Calculating cut-off rigidity...")
+
+    xq = float(lon)
+    yq = float(lat)
+
+    if xq < 0:
+        xq = xq * -1 + 180
+    Z = np.array(data.cutoff_rigidity)
+    x = np.linspace(0, 360, Z.shape[1])
+    y = np.linspace(90, -90, Z.shape[0])
+    X, Y = np.meshgrid(x, y)
+    points = np.array((X.flatten(), Y.flatten())).T
+    values = Z.flatten()
+    zq = griddata(points, values, (xq, yq))
+    zq = np.round(zq, 2)
+
+     #adding rc to metadata.
+    config_file = wd+"/config_files/config.json"
     
-    # Waiting for the calculation to be completed (you may need to adjust the waiting time).
-    driver.implicitly_wait(10)
+    with open(config_file, "r") as file:
+        config_data = json.load(file)
 
-    print('Retrieving Rc value...')
+    config_data['metadata']['rc'] = str(zq)
 
-    # Copying all text in the results window.
-    driver.switch_to.window(driver.window_handles[-1])
-    output_text = driver.find_element(By.XPATH, '//*[@id="header"]').text
+    with open(config_file, "w") as file:
+        json.dump(config_data, file, indent=4)
 
-    # Closing the browser`
-    driver.quit()
-    
-    # Writing the results into a texfile.
-    f1 = open(wd+"/outputs/data/rc_calc.txt", "w")
-    f1.write(output_text)
-    f1.close()
-    
-    #Locate Rc output in textfile and import into script.
-    def find_rc_value(filename):
-        
-        ''' Locates the value of Rc in the textfile defined previously as the ouptut calcs from crnslab.org.'''
-        
-        try:
-            # Open the text file in read mode with a different encoding
-            with open(filename, 'r', encoding='latin-1') as file:
-                # Iterate through each line in the file
-                for line_number, line in enumerate(file, start=1):
-                    # Search for the pattern 'Rc = number'
-                    match = re.search(r'Rc = (\S+)', line)
-                    if match:
-                        # Extract the numeric value after 'Rc = '
-                            rc_value = match.group(1)
-                            return f"{rc_value}"
+    print("Done")
 
-            # If 'Rc =' is not found
-            return "'Rc =' not found in the file."
-
-        except FileNotFoundError:
-            return f"File not found: {filename}" 
-    Rc = float(find_rc_value(filename = wd+"/outputs/data/rc_calc.txt"))
-    
-    return Rc
-
-def rc_retrieval(wd, config_data):
-    
-    ''' Cut off rigidity (Rc) taken from metadata (if present) or otherswise webscraped from crnslab.org using Rc_webscape function.
-       
-        Parameters
-        ----------
-        
-        nld : dictionary
-            nld should be defined in the main script (from name_list import nld), this will be the name_list.py dictionary. 
-            This will store variables such as the wd and other global vars
-       
-        Returns
-        -------
-       
-         Rc: float
-             cut off rigidity (GV)
-       
-        '''
-
-   
-    print("Retrieving Cut off rigidity value...")
-    
-    try:
-        Rc = str(config_data['metadata']['rc'])
-    
-        if Rc.isnumeric() or str(config_data['metadata']['rc']).count('.') == 1:
-            print("Cut off rigidity taken from metadata")
-            return float(Rc)
-        
-        else:
-            print("Trying to webscrape rc from crnslab.org...")
-            Rc = rc_webscrape(wd, config_data)
-            Rc = round(Rc, 5)
-            print("Cut off rigidity calculated from crnslab.org")
-            
-            #saving Rc value to metadata
-            config_file = wd+"/config_files/config.json"
-    
-            with open(config_file, "r") as file:
-                config_data = json.load(file)
-
-            config_data['metadata']['rc'] = Rc
-
-            with open(config_file, "w") as file:
-                json.dump(config_data, file, indent=4)
-           
-            return Rc
-            
-    except:
-        Rc = rc_webscrape(wd, config_data)
-        print("Cut off rigidity calculated from cnslab.org")
-        
-        #saving Rc value to metadata
-        config_file = wd+"/config_files/config.json"
-    
-        with open(config_file, "r") as file:
-            config_data = json.load(file)
-
-        config_data['metadata']['rc'] = Rc
-
-        with open(config_file, "w") as file:
-            json.dump(config_data, file, indent=4)
-        
-        return Rc       
+    return float(zq)
 
 #~~~~~~~ BETA COEFFICIENT CALC ~~~~~~~#
 
@@ -1148,7 +1053,7 @@ def rscaled(r, p, y, Hveg=0):
 
 
 #calibration function
-def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end_time, config_data):
+def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end_time, config_data, calib_data_filepath):
     """n0_calib the full calibration process
 
     Parameters
@@ -1171,6 +1076,8 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
         choice of method to convert N/N0 to sm. Standard is "desilets" method
     config_data : data stored in the config.json file.
         Stores general & metadata variables required for the data processing in addition to relevant filepaths.
+    calib_filepath : str
+        file path of the calibration data
     
     Returns
     -------
@@ -1220,7 +1127,7 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
     """
     print("Fetching calibration data...")
     # Read in Calibration data
-    df = pd.read_csv("C:/Users/joedw/OneDrive - University of Bristol/Documents/Civil Engineering/Y4/RP4/data/Ireland/Tullamore/calib_formatted_changed_dates.csv")
+    df = pd.read_csv(calib_data_filepath)
     df['DATE'] = pd.to_datetime(df['DATE'])  # Dtype into DATE
     # Remove the hour part as interested in DATE here
     df['DATE'] = df['DATE'].dt.date
@@ -2084,3 +1991,5 @@ def thetaprocess(df, country, sitenum, N0, theta_method, config_data):
     print("Done")
 
     return df
+
+
