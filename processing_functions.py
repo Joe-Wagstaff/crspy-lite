@@ -1,5 +1,4 @@
 
-
 """
 @author: Joe Wagstaff
 @institution: University of Bristol
@@ -7,14 +6,16 @@
 """
 
 #general imports
-
 import os
 import json
 import pandas as pd
 import numpy as np
+import csv
 import datetime
+
 import urllib.request
 from bs4 import BeautifulSoup
+
 import math
 import matplotlib.pyplot as plt
 from scipy.interpolate import griddata
@@ -27,49 +28,44 @@ import data
 #~~ (1) SETTING UP WORKING DIRECTORY AND CONFIG FILE ~~#
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
-def initial(wd):
+def initial(default_dir):
     
-    ''' Creates files 
+    '''Creates a file structure for all outputs to be saved to. Creates all files relative to the default directory specified by the user.
     
     Parameters:
     -----------
     
-    wd : string
-        current working directory
+    default_dir : str
+        Default directory for folder creation and outputs.
     
     '''
     try:
-        os.mkdir(wd+"/config_files/")
+        os.mkdir(default_dir+"/inputs/")
     except:
         print("Folder already exists, skipping.")
         pass
     
     try:
-        os.mkdir(wd+"/outputs/")
+        os.mkdir(default_dir+"/outputs/")
     except:
         print("Folder already exists, skipping.")
         pass
     
     try:
-        os.mkdir(wd+"/outputs/figures/")
+        os.mkdir(default_dir+"/outputs/figures/")
     except:
         print("Folder already exists, skipping.")
         pass
 
     try:
-        os.mkdir(wd+"/outputs/data/")
+        os.mkdir(default_dir+"/outputs/data/")
     except:
         print("Folder already exists, skipping.")
         pass
     
-    try:
-        os.mkdir(wd+"/outputs/nmdb_outputs/")
-    except:
-        print("Folder already exists, skipping.")
-        pass
 
 
-def create_config_file(wd):  
+def create_config_file(default_dir):  
     
     ''' Creates config file which is a namelist of general and metadata (site) variables. 
         Prompts the user to input metadata variables in the terminal.
@@ -77,13 +73,12 @@ def create_config_file(wd):
     Parameters:
     -----------
     
-    wd : string
-        current working directory
+    default_dir : str
+        Default directory for folder creation and outputs.
     
     '''
 
-    config_directory = wd+"/config_files/" #creates the config file in the media folder
-    config_file = os.path.join(config_directory, "config.json")
+    config_file = os.path.join(default_dir, "inputs/config.json")
 
     #general processing variables.
     general_variables = {
@@ -103,6 +98,7 @@ def create_config_file(wd):
         "a0":"0.0808",
         "a1":"0.372",
         "a2":"0.115",
+        "sm_calc_method" : None,
     }
     
     #variables to be inputted by the user
@@ -110,9 +106,9 @@ def create_config_file(wd):
     "country": {"description": "Code of country the sensor is in", "default": None, "required": True},
     "sitenum": {"description": "Site number", "default": None, "required": True},
     "sitename": {"description": "Name of site", "default": None, "required": True},
-    "install_date": {"description": "Date of sensor installation dd/mm/yyyy", "default": None, "required": True},
-    "longitude": {"description": "Longitude of site (in degrees)", "default": None, "required": True},
-    "latitude": {"description": "Latitude of site (in degrees)", "default": None, "required": True},
+    "install_date": {"description": "Date of sensor installation dd/mm/yyyy", "default": None, "required": False},
+    "longitude": {"description": "Longitude of site (in degrees). Values in range from 0 to 360", "default": None, "required": True},
+    "latitude": {"description": "Latitude of site (in degrees). Values in range -90 to 90", "default": None, "required": True},
     "elev": {"description": "Elevation of site above sea level (m)", "default": None, "required": True},
     "timezone": {"description": "Timezone of site [optional]", "default": None, "required": False},
     "rc": {"description": "Cut of Rigidity (in gv) [optional]", "default": None, "required": False},
@@ -121,9 +117,10 @@ def create_config_file(wd):
     "bd": {"description": "Bulk density (g/cm^3)", "default": None, "required": True},
     "beta_coeff": {"description": "Store of the calculated beta coefficient for each individual site [optional]", "default": None, "required": False},
     "reference_press": {"description": "Reference pressure (in mb)", "default": None, "required": True},
+    "n0": {"description": "Theoetical neutron count for absolute dry soil conditions", "default": None, "required": False},
     "precip_max": {"description": "Maximum precipitation (in mm). Values above this are removed. [optional]", "default": None, "required": False},
     "sm_max": {"description": "Maximum value of soil moisture (in cm^3/cm^3). Values above this are removed. [optional]", "default": None, "required": False},
-    "raw_data_filepath": {"description": "File path of Input data", "default": "raw_data.txt", "required": False},
+    "raw_data_filepath": {"description": "File path of Input data", "default": None, "required": False},
       
     }
 
@@ -156,18 +153,17 @@ def create_config_file(wd):
     with open(config_file, "r") as file:
         config_data = json.load(file)
 
-    #adjusting config file sections to include a filepaths section, move raw_data_filepath to this section & create a default directory.
+    #adjusting config file sections to include a filepaths section, move raw_data_filepath to this section & establish a default directory.
     config_data['filepaths'] = {}
     raw_data_filepath = config_data['metadata']['raw_data_filepath']
     del config_data['metadata']['raw_data_filepath']
-    config_data['filepaths']['raw_data_filepath'] = raw_data_filepath
-    config_data['filepaths']['default_dir'] = wd  #setting the working directory as the default directory.
+    config_data['filepaths']['raw_data_filepath'] = raw_data_filepath.strip('"')    #.strip('"') brought in to avoid filepath error from copying filepaths using ctrl+shift+c.
+    config_data['filepaths']['default_dir'] = default_dir  
 
     # Save the new section back to the JSON file.
     with open(config_file, "w") as file:
         json.dump(config_data, file, indent=4)
 
-    
     print(f"Configuration saved to {config_file}")
 
 
@@ -175,23 +171,153 @@ def create_config_file(wd):
 #~~ (2) RAW DATA TIDYING ~~#
 #~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
-def resample_to_hourly(df, config_data, wd):
+def retrieve_data_url(url):
 
-    """
-    Resamples input data to hourly intervals
+    """Function that will retrieve input CRNS data from a weblink
 
     Parameters
     ----------
+    url : str
+        Weblink of CRNS input data.
+    
+    Returns
+    -------
+    df : DataFrame
+        Input data from weblink.
 
-    df : dataframe  
-        dataframe to reformat
+    """
+    print("Retrieving CRNS data from url...")
+    try:
+        response = urllib.request.urlopen(url) #get the html response
+        html = response.read()   #rewad response
+        soup = BeautifulSoup(html, "lxml") #pass html
+
+        body = soup.find("body") # Find the <body> of the HTML
+        lines = [line.strip() for line in body.find_all(text=True) if line.strip()] # Extract all the content split by <br> tags
+        data_rows = [line.split(", ") for line in lines]  # Adjust delimiter if necessary
+
+        # Create a DataFrame, assuming the first line contains headers
+        if data_rows:
+        
+            headers = data_rows[1]  # Assuming the second line contains headers
+            df = pd.DataFrame(data_rows[2:], columns=headers)   # '2:' Assumes the second line contains headers
+            print("Done")
+            return df
+    
+        else:
+            print("No data found.")
+            return None
+
+    except Exception as e:  #catches error that might occur
+        print(f"An error occurred: {e}")
+        return None
+    
+
+def read_file(file_path):
+
+    """Function to check what delimiter the input file has and then read it correctly.
+    
+    Parameters
+    ----------
+    file_path : str
+        File path of the input data.
+        
+    Returns
+    -------
+    df : DataFrame
+        DataFrame of input (or "raw") data.
+    
+    """
+
+    # Read the first few lines of the file
+    with open(file_path, 'r') as file:
+        sample = file.read(4096)  # Read the first 4KB of the file
+
+    # Use csv.Sniffer to detect the delimiter
+    sniffer = csv.Sniffer()
+    delimiter = ','  # Default to comma
+    if sniffer.has_header(sample):
+        header = True
+    else:
+        header = False
+
+    try:
+        delimiter = sniffer.sniff(sample).delimiter
+    
+    except csv.Error:
+        print("Could not detect delimiter. Defaulting to comma.")
+
+    print(f"Detected delimiter of input data: '{delimiter}'")
+
+    # Load the file into a DataFrame with the detected delimiter
+    df = pd.read_csv(file_path, delimiter=delimiter, header=0 if header else None)
+
+    return df
+
+
+def flip_df(df):
+
+    """Optional function to flip the DataFrame if the dates are the wrong way round (from most recent to least recent).
+    
+    Parameters
+    ----------
+    df : DataFrame  
+        Input data to reformat.
+
+    config_data : dictionary
+        Store of variables required for the data processing. Also stores relevant filepaths.
+
+    default_dir : str
+        Default directory for folder creation and outputs.
+    
+        
+    Returns
+    -------
+    df : DataFrame
+        Reformated data.
+
+    """
+    df['DATETIME'] = pd.to_datetime(df['DATETIME'], format='mixed')
+    df.set_index(df['DATETIME'], inplace=True)
+
+    if df['DATETIME'].iloc[0] > df['DATETIME'].iloc[-1]:    #is the first date greater than the last date?
+        
+        df = df.iloc[::-1]  #if so, this line reorders the rows
+
+    else:
+        pass
+
+    return df
+
+
+def resample_to_hourly(df, config_data, default_dir):
+
+    """
+    Resamples the input data to hourly intervals.
+
+    Parameters
+    ----------
+    df : DataFrame  
+        Input data to reformat.
+
+    config_data : dictionary
+        Store of variables required for the data processing. Also stores relevant filepaths.
+
+    default_dir : str
+        Default directory for folder creation and outputs.
+    
+        
+    Returns
+    -------
+    df_resampled : DataFrame
+        Resampled data.
     
     """
     
-    df['TIME'] = pd.to_datetime(df['TIME'], dayfirst=True)
-    df.set_index(df['TIME'], inplace=True)
+    df['DATETIME'] = pd.to_datetime(df['DATETIME'], dayfirst=True)
+    df.set_index(df['DATETIME'], inplace=True)
 
-    df = df.drop(columns=['TIME'])
+    df = df.drop(columns=['DATETIME'])
 
     sum_cols = ['MOD', 'RAIN']
     mean_cols = ['PRESS','TEMP', 'E_RH', 'I_RH', 'BATT']
@@ -202,43 +328,55 @@ def resample_to_hourly(df, config_data, wd):
     df_sum = df[sum_cols].resample('h').sum()
     df_mean = df[mean_cols].resample('h').mean()
 
-    df_resampled = pd.concat([df_sum, df_mean], axis=1)
-    df_resampled.reset_index(inplace=True)
-
-    df_resampled = df_resampled.round(2)
-
-    output_tidy_path = wd+"/outputs/data/"+config_data['metadata']['country']+"_SITE_"+config_data['metadata']['sitenum']+"_resampled.txt"
-    df_resampled.to_csv(output_tidy_path, index=False, header=True, sep='\t')
+    df_resampled = pd.concat([df_sum, df_mean], axis=1) #doesn't work if you concat df, need to create a new dataframe
+    df_resampled.reset_index(inplace=True)  #resets the index, moving 'TIME' back to the cols
     
     return df_resampled
         
+
 def tidy_headers(df):
 
-    """tidy_headers removes any spaces in the headers for the columns in the raw data file. 
+    """Removes any spaces in the headers of the columns in the input data file. 
     
     Parameters
     ----------
-    df : dataframe  
-        dataframe of raw data
+    df : DataFrame  
+        Input data.
     
-    """
+        
+    Returns
+    -------
+    df : DataFrame  
+        Manipulated input data.
+   
+     """
+    
     df.columns = df.columns.str.strip()
     
     return df
 
 def dropemptycols(colstocheck, df, config_data):
     
-    """dropemptycols drop any columns that are empty (i.e. all -999)
+    """Drops any columns that are empty (i.e. all -999)
 
     Parameters
     ----------
     colstocheck : str
-        string of column title to check
-    df : dataframe  
-        dataframe to check
+        string of column title to check.
+    
+    df : DataFrame  
+        DataFrame to check.
+    
+    config_data : dictionary
+        Store of variables required for the data processing. Also stores relevant filepaths.
+
+
+    Returns
+    -------
+    df : DataFrame  
+        Manipulated input data.
 
     """
-
     for i in range(len(colstocheck)):
         col = colstocheck[i]
         if col in df:
@@ -251,40 +389,57 @@ def dropemptycols(colstocheck, df, config_data):
                 pass
         else:
             pass
+    
     return df
 
-def prepare_data(df, config_data):
+def movecol(df, col, location):
+        
+        """
+        Move columns to a specific position.
+        """
+        tmp = df[col]
+        df.drop(labels=[col], axis=1, inplace=True)
+        df.insert(location, col, tmp)
+
+def prepare_data(df, config_data, default_dir):
     
-    """prepare_data cleans/tidies the input data.
+    """Cleans/tidies the input data.
 
     Steps include: 
-        - Find the country and sitenum from text file title
         - Fix time to be on the hour rather than variable
-        - Final tidy of columns
+        - Tidy of columns
 
     Parameters
     ----------
-
     df: DataFrame 
-        input data/raw dataframe
+        Input data.
 
+    config_data : dictionary
+        Store of variables required for the data processing. Also stores relevant filepaths.
 
-    config_data : data stored in the config.json file.
-        Stores general & metadata variables required for the data processing in addition to relevant filepaths.
+    default_dir : str
+        Default directory for folder creation and outputs.
+    
+    Returns
+    -------
+    df : DataFrame  
+        Manipulated input data.
 
     """
     print("Preparing data...")
 
     # Remove leading white space - present in some SD card data
-    df['TIME'] = df['TIME'].astype(str)
-    df['TIME'] = df['TIME'].str.lstrip() 
+    df['DATETIME'] = df['DATETIME'].astype(str)
+    df['DATETIME'] = df['DATETIME'].str.lstrip() 
     
     # Ensure using dashes as Excel tends to convert to /s
-    if '/' in df['TIME'][0]:
-        df['TIME'] = df['TIME'].str.replace('/', '-')
+    if '/' in df['DATETIME'][0]:
+        df['DATETIME'] = df['DATETIME'].str.replace('/', '-')
     else:
         pass
-    tmp = df['TIME'].str.split(" ", n=1, expand=True)
+    
+    #split 'DATETIME' col into a 'DATE' col and a 'TIME' col. The datetime col is then reassempled under the name 'DT' (shorter name so simpler to code)
+    tmp = df['DATETIME'].str.split(" ", n=1, expand=True) 
     df['DATE'] = tmp[0]
     df['TIME'] = tmp[1]
     new = df["TIME"].str.split(":", n=2, expand=True)
@@ -302,10 +457,6 @@ def prepare_data(df, config_data):
         tseries.append(time)  # Append onto tseries
 
     df['DT'] = tseries      # replace DT with tseries which now has time as well
-
-    # Collect dates here to prevent issues with nan values after mastertime - for use in Jungrafujoch process
-    startdate = str(df['DATE'].iloc[0])
-    enddate = str(df['DATE'].iloc[-1])
 
     ### The Master Time ###
     """
@@ -326,41 +477,25 @@ def prepare_data(df, config_data):
     df.insert(0, 'DT', dtcol)
 
     df['dupes'] = df.duplicated(subset="DT")
-    # Add a save for dupes here - need to test a selection of sites to see
-    # whether dupes are the same.
-    df.to_csv("outputs/data/" + config_data['metadata']['country']+"_SITE_" + config_data['metadata']['sitenum'] + "_DUPES.txt",
-              header=True, index=False, sep="\t",  mode='w')
     df = df.drop(df[df.dupes == True].index)
     df = df.set_index(df.DT)
     if df.DATE.iloc[0] > df.DATE.iloc[-1]:
-        raise Exception(
-            "The dates are the wrong way around.")
+        raise Exception("The dates are the wrong way around.")
 
     idx = pd.date_range(
-        df.DATE.iloc[0], df.DATE.iloc[-1], freq='1H')#closed='left')
+        df.DATE.iloc[0], df.DATE.iloc[-1], freq='1H')
     df = df.reindex(idx, fill_value=np.nan)
-    df = df.replace(np.nan, int(config_data['general']['noval'])) # add replace to make checks on whole cols later
+    df = df.replace(np.nan, int(config_data['general']['noval']))
 
     df['DT'] = df.index
 
     
     ### The Final Table ###
-    def movecol(col, location):
-        """
-        Move columns to a specific position.
-        """
-        tmp = df[col]
-        df.drop(labels=[col], axis=1, inplace=True)  # Move DT to first col
-        df.insert(location, col, tmp)
 
     # Move below columns as like them at the front
-    movecol("MOD", 1)
-    try:
-        movecol("UNMOD", 2)
-    except:
-        df.insert(2, "UNMOD", np.nan)  # filler for if UNMOD is unavailble
-    movecol("PRESS", 3)
-    #movecol("TEMP", 4)
+    movecol(df, "MOD", 1)
+    movecol(df, "PRESS", 3)
+    
     
     df.drop(labels=['dupes'],
             axis=1, inplace=True)  # not required after here
@@ -377,43 +512,47 @@ def prepare_data(df, config_data):
     
     print("Done")
 
+    return df
 
 #~~~~~~~~~~~~~~~~~~~~~~#
 #~~ (3) DATA IMPORTS ~~# 
 #~~~~~~~~~~~~~~~~~~~~~~#
 
+
 #~~~ NMDB data import ~~~#
-def nmdb_get(startdate, enddate, station, wd):
-    """nmdb_get will collect data for Junfraujoch station that is required to calculate f_intensity.
-    Returns a dictionary that can be used to fill in values to the main dataframe
-    of each site.
+
+def nmdb_get(startdate, enddate, station, default_dir):
+    
+    """Function will collect data for Junfraujoch station that is required to calculate the incoming neutron intensity correction factor.
+    Returns a dictionary that can be used to fill in values to the main dataframe of each site.
 
     Parameters
     ----------
     startdate : datetime
-        start date of desire data in format YYYY-mm-dd
-            e.g 2015-10-01
+        start date of desire data in format YYYY-mm-dd (e.g 2015-10-01)
+    
     enddate : datetime
         end date of desired data in format YYY-mm-dd
-    station : str, optional
-        if using different station provide the value here (NMDB.eu shows alternatives), by default "JUNG"
+    
+    station : str
+        Neutron monitoring station (default "JUNG")
    
-    wd: str
-        filepath of the working directory
+    default_dir : str
+        Default directory for folder creation and outputs.
         
-    config_data : data stored in the config.json file.
-        Stores general & metadata variables required for the data processing in addition to relevant filepaths.
 
     Returns
     -------
-    dict
+    : dict
         dictionary of neutron count data from NMDB.eu
+ 
     """
     # split for use in url
     sy, sm, sd = str(startdate).split("-")
     ey, em, ed = str(enddate).split("-")
 
     # Collect html from request and extract table and write to dict
+    print("Retrieving data from the NMDB...")
     url = "http://nest.nmdb.eu/draw_graph.php?formchk=1&stations[]={station}&tabchoice=1h&dtype=corr_for_efficiency&tresolution=60&force=1&yunits=0&date_choice=bydate&start_day={sd}&start_month={sm}&start_year={sy}&start_hour=0&start_min=0&end_day={ed}&end_month={em}&end_year={ey}&end_hour=23&end_min=59&output=ascii"
     url = url.format(station=station, sd=sd, sm=sm, sy=sy, ed=ed, em=em, ey=ey)
     response = urllib.request.urlopen(url)
@@ -423,60 +562,66 @@ def nmdb_get(startdate, enddate, station, wd):
     pre = pre[0].text
     pre = pre[pre.find('start_date_time'):]
     pre = pre.replace("start_date_time   1HCOR_E", "")
-    f = open(wd+"/outputs/nmdb_outputs/nmdb_tmp.txt", "w")
-    f.write(pre)
-    f.close()
-    df = open(wd+"/outputs/nmdb_outputs/nmdb_tmp.txt", "r")
-    lines = df.readlines()
-    df.close()
-    lines = lines[1:]
+    
+    # Split lines and create a DataFrame
+    lines = pre.strip().split("\n")[1:]  # Skip the header
     dfneut = pd.DataFrame(lines)
     dfneut = dfneut[0].str.split(";", n=2, expand=True)
-    cols = ['DATE', 'COUNT']
-    dfneut.columns = cols
+    dfneut.columns = ['DATE', 'COUNT']
+
+    # Convert COUNT to numeric and replace 0 or 0.00 with NaN
+    dfneut['COUNT'] = pd.to_numeric(dfneut['COUNT'], errors='coerce')
+    dfneut['COUNT'] = dfneut['COUNT'].replace(0, np.nan)
+
+    # Write the cleaned data to the file
+    output_path = f"{default_dir}/outputs/data/nmdb_station_counts.txt"
+    dfneut.to_csv(output_path, sep=";", index=False, header=False)
+
+    # Convert dates to datetime and create the dictionary
     dates = pd.to_datetime(dfneut['DATE'])
     count = dfneut['COUNT']
-
     dfdict = dict(zip(dates, count))
+
+    print("Done")
+    return dfdict
 
 
 #~~~~~~~ CUT-OFF RIGIDITY CALC~~~~~~~#
-def rc_retrieval(lat, lon, wd):
+
+def rc_retrieval(latitude, longitude):
+    
     """Function to estimate the approximate cutoff rigidity for any point on Earth according to the
-    tabulated data of Smart and Shea, 2019. The returned value can be used to select the appropriate
-    neutron monitor station to estimate the cosmic-ray neutron intensity at the location of interest.
+    tabulated data of Smart and Shea, 2019. 
 
     Parameters
     ----------
-    lat: float
-        Geographic latitude in decimal degrees. Value in range -90 to 90
-    lon: float
+    latitude: float
+        Geographic latitude in decimal degrees. Values in range -90 to 90
+    
+    longitude: float
         Geographic longitude in decimal degrees. Values in range from 0 to 360.
         Typical negative longitudes in the west hemisphere will fall in the range 180 to 360.
-    wd: str
-        Working directory
+
 
     Returns
     -------
-        (float): Cutoff rigidity in GV. Error is about +/- 0.3 GV
+    zq : float
+        Cutoff rigidity in GV. Error is about +/- 0.3 GV
 
     References
     ----------
-        Hawdon, A., McJannet, D., & Wallace, J. (2014). Calibration and correction procedures
-        for cosmic‐ray neutron soil moisture probes located across Australia. Water Resources Research,
-        50(6), 5029-5043.
+    Hawdon et al. (2014) : https://doi.org/10.1002/2013WR015138
+    
+    Smart, D. & Shea, Matthew. (2001). Geomagnetic Cutoff Rigidity Computer Program:
+    Theory, Software Description and Example. NASA STI/Recon Technical Report N.
 
-        Smart, D. & Shea, Matthew. (2001). Geomagnetic Cutoff Rigidity Computer Program:
-        Theory, Software Description and Example. NASA STI/Recon Technical Report N.
-
-        Shea, M. A., & Smart, D. F. (2019, July). Re-examination of the First Five Ground-Level Events.
-        In International Cosmic Ray Conference (ICRC2019) (Vol. 36, p. 1149).
+    Shea, M. A., & Smart, D. F. (2019, July). Re-examination of the First Five Ground-Level Events.
+    In International Cosmic Ray Conference (ICRC2019) (Vol. 36, p. 1149).
+  
     """
 
-    print("Calculating cut-off rigidity...")
-
-    xq = float(lon)
-    yq = float(lat)
+    xq = float(longitude)
+    yq = float(latitude)
 
     if xq < 0:
         xq = xq * -1 + 180
@@ -489,48 +634,36 @@ def rc_retrieval(lat, lon, wd):
     zq = griddata(points, values, (xq, yq))
     zq = np.round(zq, 2)
 
-     #adding rc to metadata.
-    config_file = wd+"/config_files/config.json"
-    
-    with open(config_file, "r") as file:
-        config_data = json.load(file)
-
-    config_data['metadata']['rc'] = str(zq)
-
-    with open(config_file, "w") as file:
-        json.dump(config_data, file, indent=4)
-
-    print("Done")
-
     return float(zq)
+
 
 #~~~~~~~ BETA COEFFICIENT CALC ~~~~~~~#
 
-def betacoeff(lat, elev, r_c, wd, config_data):
-    """betacoeff will calculate the beta coefficient for each site.
+def betacoeff(lat, elev, Rc):
+    
+    """Function will calculate the beta coefficient for a site.
 
     Parameters
     ----------
     lat : float
         latitude of site (degrees)
+   
     elev : integer 
         elevation of site (m)
-    r_c : float
-        cutoff ridgidity (GV)
+    
+    Rc : float
+        cutoff ridgidity of site (in GV)
 
-    wd: str
-        filepath of the working directory
         
-    config_data : data stored in the config.json file.
-        Stores general & metadata variables required for the data processing in addition to relevant filepaths.
-
     Returns
     -------
-    float
-        returns beta coefficient and mean pressure - both written to metadata also
-    """
+    beta_coeff : float
+        Beta coefficient of the site.
+
+    x0 : float
+        Mean pressure (in mb)
     
-    print("Calculating beta coefficient...")
+    """
 
     # --- elevation scaling ---
 
@@ -576,72 +709,70 @@ def betacoeff(lat, elev, r_c, wd, config_data):
     b8 = -4.29191E-14
 
     # calculations
-    term1 = n_1*(1+np.exp(-alpha_1*r_c**k_1))**-1*(x-x0)
-    term2 = 0.5*(b0+b1*r_c+b2*r_c**2)*(x**2-x0**2)
-    term3 = 0.3333*(b3+b4*r_c+b5*r_c**2)*(x**3-x0**3)
-    term4 = 0.25*(b6+b7*r_c+b8*r_c**2)*(x**4-x0**4)
+    term1 = n_1*(1+np.exp(-alpha_1*Rc**k_1))**-1*(x-x0)
+    term2 = 0.5*(b0+b1*Rc+b2*Rc**2)*(x**2-x0**2)
+    term3 = 0.3333*(b3+b4*Rc+b5*Rc**2)*(x**3-x0**3)
+    term4 = 0.25*(b6+b7*Rc+b8*Rc**2)*(x**4-x0**4)
 
-    beta = abs((term1 + term2 + term3 + term4)/(x0-x))
-    beta = str(round(beta, 5))
+    beta_coeff = abs((term1 + term2 + term3 + term4)/(x0-x))
+    beta_coeff = str(round(beta_coeff, 5))
 
-    #adding beta_coeff to metadata.
-    config_file = wd+"/config_files/config.json"
-    
-    with open(config_file, "r") as file:
-        config_data = json.load(file)
-
-    config_data['metadata']['beta_coeff'] = beta
-
-    with open(config_file, "w") as file:
-        json.dump(config_data, file, indent=4)
-
-    print("Done")
-
-    return beta, x0
+    return beta_coeff, x0
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 #~~ (4) CORRECTION FACTOR FUNCTIONS ~~# 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
-#pressure
-def pressfact_B(press, B, p0):
-    """pressfact_B corrects neutrons for pressure changes
+#~~~~~~~ PRESSURE CORRECTION ~~~~~~~#
+
+def pressure_correction(press, beta_coeff, p0):
+   
+    """Function corrects neutrons for pressure changes
 
     Parameters
     ----------
-    press : float
-        pressure (mb)
-    B : float
-        beta coefficient e.g. 0.007
+    press : Series
+        pressure of site (mb).
+    
+    beta_coeff : float
+        Beta coefficient for site. [Can be calculated using the function "betacoeff()"]
+    
     p0 : int
         reference pressure (mb)
 
+        
     Returns
     -------
-    float
-        number to multiply neutron counts by to correct
+    : float
+        Pressure correction factor
+    
     """
-    return np.exp(B*(press-p0))
+    
+    return np.exp(beta_coeff * (press-p0))
 
-#humidity
+#~~~~~~~ HUMIDITY CORRECTION ~~~~~~~#
+
 def es(temp):
-    """es Calculate saturation vapour pressure (hPA) using average temperature
-    Can be used to calculate actual vapour pressure (hPA) if using dew point temperature    
+   
+    """Calculates saturation vapour pressure (in Pa) using average temperature   
 
     Parameters
     ----------
-    temp : float  
+    temp : Series  
         temperature (C)
 
+        
     Returns
     -------
-    float 
-        saturation vapour pressure (hPA) 
+    : Series 
+        saturation vapour pressure (in Pa) 
     """
-    return 6.112*np.exp((17.67*temp)/(243.5+temp))
 
-def rh(t, td): #not using this fnc atm as processing data from sites with relative humidity sensors.
+    return (6.112*np.exp((17.67*temp)/(243.5+temp)))*100
+
+def rh(t, td): #not using this fnc currently as processing data from sites with relative humidity sensors.
+    
     """rh Use temperature (C) and dewpoint temperature (C) to calculate relative humidity (%)
 
     Parameters
@@ -651,32 +782,40 @@ def rh(t, td): #not using this fnc atm as processing data from sites with relati
     td : float
         dewpoint temperature (C)
 
+        
     Returns
     -------
     float
         relative humidity (%)
+    
     """
+    
     return 100*np.exp((17.625*243.04*(td-t))/((243.04+t)*(243.04+td)))
 
 def ea(es, RH):
-    """ea Uses saturation vapour pressure (es - converted to Pascals) with relative humidity (RH) to 
-    produce actual vapour pressure (Pascals)
+    
+    """Caluculates actual vapour pressure (in Pa) using saturation vapour pressure and relative humidity (RH).
 
     Parameters
     ----------
-    es : float
-        saturation vapour pressure (Pascal)
-    RH : float
-        relative humidity (%)
+    es : Series
+        saturation vapour pressure (in Pa). [Can be found using the function "es()"]
+    
+    RH : Series
+        External relative humidity (%) at the site.
 
+        
     Returns
     -------
-    float
+    : Series
         actual vapour pressure (Pascals)
+    
     """
+   
     return es * (RH/100)
 
-def dew2vap(dt):    #not using this fnc atm
+def dew2vap(dt):    #not using this function currently
+   
     """dew2vap  gives vapour pressure (kPA). Taken from Shuttleworth (2012) Eq 2.21 rearranged
 
     Parameters
@@ -689,71 +828,268 @@ def dew2vap(dt):    #not using this fnc atm
     float
         vapour pressure (kPA)
     """
+
     return np.exp((0.0707*dt-0.49299)/(1+0.00421*dt))
 
+
 def pv(ea, temp):
-    """pv works out absolute humidity using temperature (C) and vapour pressure unit (Pascals)
+    
+    """Finds absolute humidity (in g/m^3) using actual vapour pressure (in Pa) and temperature (C) 
 
     Parameters
     ----------
-    ea : float  
-        Vapour Presure (Pascals)
+    ea : Series  
+        Vapour Presure (Pascals) [Can be found using the function "ea()"]
+   
     temp : float
         temperature (C)
 
+        
     Returns
     -------
     float
-        absolute humidity (ouput as kg/m^3)
+        Absolute humidity (in g/m^3).
+    
     """
-    return ea/(461.5*(temp+273.15))
 
-def humfact(pv, pv0):
+    return (ea/(461.5*(temp+273.15))) * 1000
+
+
+def humidity_correction(pv, pv0):
+    
     """humfact gives the factorial to multiply Neutron counts by
 
     Parameters 
     ----------
-    pv : float 
-        absolute humidity
+    pv : Series 
+        Absolute humidity. [Can be found using the function "pv()"]
+    
     pv0 : float
-        reference absolute humidity
+        Reference absolute humidity.
 
     Returns
     -------
-    float
-        factor to multiply neutrons by
-    """
+    : Series
+        Humidity correction factor.
+   
+     """
+
     return (1+0.0054*(pv-pv0))
 
 
-#cosmic ray intensity
-def finten(jung_ref, jung_count):
-    """finten correction for incoming neutron intensity
+#~~~~~~~ INCOMING NEUTRON INTENSITY CORRECTION ~~~~~~~#
 
-    Parameters
-    ----------
-    jung_ref : float
-        reference neutron count at JUNG (usually 01/05/2011)
-    jung_count : float
-        count at time[0]
-
-    """
-    return jung_ref / jung_count
-
-def RcCorr(Rc):
+#Hawdon et al. (2014) method.
+def RcCorr(Rc, Rc_ref):
+    
     """RcCorr takes cutoff ridgity of site (Rc) and gives the RcCorr value required to 
-    account for the difference to Jungfraujoch.
+    account for the difference to the reference monitoring station. 
+
+    Required for the Hawdon et al (2014) intensity correction.
 
     Parameters
     ----------
     Rc : float
-        cutoff ridgidity of site
+        Cutoff ridgidity of site. [Can be estimated using the function "rc_retrieval()"]
+
+    Rc_ref : float
+        Cutoff ridigity of the reference monitoring station
+
+    Returns
+    -------
+    gamma : float
+        Amplitude scaling factor used to adjust for geomagnetic effects between the site & station.
+
+    References
+    ----------
+    Hawdon et al. (2014) :  https://doi.org/10.1002/2013WR015138    
 
     """
-    return -0.075*(Rc-4.49)+1
+    
+    gamma = -0.075 * (Rc - Rc_ref) + 1
 
-#biomass
-def agb(agbval):
+    return gamma
+
+
+def intensity_correction_Hawdon2014(station_ref, station_count, RcCorr):
+  
+    """Incoming neutron intensity correction for the Hawdon et al. (2014) method.
+   
+    Note the intensity corrections are labelled as finten_1, finten_2 & finten_3 in the code as per the 
+        labelling in the McJannet & Desilets (2023) paper.
+     
+    Parameters
+    ----------
+    jung_ref : float
+        Reference neutron count at JUNG (usually 01/05/2011).
+    
+    jung_count : float
+        Count at time[0].
+    
+    RcCorr : float
+        Amplitude scaling factor used to adjust for geomagnetic effects between the site & station. [Found using the function "RcCorr()"]
+
+    Returns
+    -------
+    finten_2 : Series
+        Incoming neutron intensity correction factor for the Hawdon et al. (2014) method.
+
+    References
+    ----------
+    Hawdon et al. (2014) :  https://doi.org/10.1002/2013WR015138
+
+    """
+    f_i = station_count / station_ref
+    f_i = 1 / (((f_i - 1) * RcCorr) + 1)
+
+    return f_i
+
+#McJannet & Desilets (2023) method.
+def atmospheric_depth(elev, latitude):
+    
+    """Estimates the atmospheric depth for any point on the Earth.
+    This function is required to calculate the location factor for the McJannet and Desilets (2023) intensity correction.
+    
+    Parameters
+    ----------
+    elev : float
+        Elevation of the site above sea level (m).
+   
+    latitude : float
+        Geographic latitude in decimal degrees (ranging from -90 to 90).
+        
+    Returns
+    -------
+    atmospheric_depth : float
+        Atmospheric depth in g/cm2.
+
+    References
+    ----------
+    Atmosphere, U. S. (1976). US standard atmosphere. National Oceanic and Atmospheric Administration.
+
+    McJannet, D. L., & Desilets, D. (2023). Incoming Neutron Flux Corrections for Cosmic‐Ray Soil and Snow Sensors Using the 
+        Global Neutron Monitor Network. Water Resources Research, 59(4), e2022WR033889.
+    
+    """
+    density_of_rock = 2670  # Density of rock in kg/m3
+    air_pressure_sea_level = 1013.25  # Air pressure at sea level in hPa
+    air_molar_mass = 0.0289644  # Air molar mass in kg/mol
+    universal_gas_constant = 8.31432  # Universal gas constant in J/(mol*K)
+    reference_temperature = 288.15  # Reference temperature Kelvin
+    temperature_lapse_rate = -0.0065  # Temperature lapse rate in K/m
+
+    # Gravity at sea-level calculation
+    gravity_sea_level = 9.780327 * (
+            1 + 0.0053024 * np.sin(np.radians(latitude)) ** 2 - 0.0000058 * np.sin(2 * np.radians(latitude)) ** 2)
+    # Free air correction
+    free_air = -3.086 * 10 ** -6 * elev
+    # Bouguer correction
+    bouguer_corr = 4.193 * 10 ** -10 * density_of_rock * elev
+    # Total gravity
+    gravity = gravity_sea_level + free_air + bouguer_corr
+
+    # Air pressure calculation
+    reference_air_pressure = air_pressure_sea_level * (
+            1 + temperature_lapse_rate / reference_temperature * elev) ** ((-gravity * air_molar_mass) / (
+            universal_gas_constant * temperature_lapse_rate))
+
+    # Atmospheric depth calculation
+    atmospheric_depth = (10 * reference_air_pressure) / gravity
+    
+    return atmospheric_depth
+
+
+def location_factor(site_atmospheric_depth, Rc, ref_atmospheric_depth, reference_Rc):
+    
+    """location_factor estimates the location factor (tau) between two sites according to McJannet and Desilets (2023)
+    Function is required for the McJannet and Desilets (2023) incoming neutron intensity correction.
+    
+    Parameters
+    ----------
+    site_atmospheric_depth : float 
+        Atmospheric depth at the site in g/cm2. [Can be estimated using the function "atmospheric_depth()"]
+    
+    Rc : float
+        Cutoff rigidity at the site in GV. [Can be estimated using the function "Rc_retrieval()"]
+    
+    reference_atmospheric_depth : float
+        Atmospheric depth at the reference location in g/cm2.
+   
+    reference_Rc : 
+        Cutoff rigidity at the reference location in GV.
+        
+    Returns
+    -------
+    tau : float
+        Location factor.
+
+    K : float
+        Scaling factor between chosen neutron monitor & CLMX monitor.
+
+    References
+    ----------
+    McJannet and Desilets (2023) : https://doi.org/10.1029/2022WR033889
+
+    """
+    #Fixed variables based on Table 1 in McJannet & Desilet (2023). Note some differences in sign convention to simplify the code.
+    c0 = -0.0009 
+    c1 = 1.7699 
+    c2 = 0.0064 
+    c3 = 1.8855  
+    c4 = 0.000013 
+    c5 = -1.2237 
+    epsilon = 1 #Accounts for the differences between epithermal neutrons measured by a CRNS and high energy neutrons measured by the neutrons monitors. No correction for this at present.
+
+    #first find tau_new to account for differences between new neutron monitoring station and CLMX station.
+    tau_new = epsilon * (c0 * ref_atmospheric_depth + c1) * (
+            1 - np.exp(-(c2 * ref_atmospheric_depth + c3) * reference_Rc ** (c4 * ref_atmospheric_depth + c5)))
+
+    #Quanitfy this difference by calculating the scaling factor, K.
+    K = 1 / tau_new    # K = tau_CLMX / tau_new , where tau_CLMX is equal to 1 >see McJannet & Desilet (2023) paper.
+
+    #Now find location factor, tau for the CRNS site.
+    tau = epsilon * (c0 * site_atmospheric_depth + c1) * (
+            1 - np.exp(-(c2 * site_atmospheric_depth + c3) * Rc ** (c4 * site_atmospheric_depth + c5)))
+    
+    return tau, K
+
+
+def intensity_correction_McJannet2023(station_ref, station_count, tau):
+    
+    """Incoming neutron intensity correction for the McJannet and Desilets (2023) method. The author recommends using this correction method.
+    
+    Parameters
+    ----------
+    station_ref : float
+        reference neutron count at neutron monitoring station (usually 01/05/2011).
+    
+    station_count : float
+        count at time[0].
+
+    tau : float
+        location factor. [Found using the function "location_factor()"]
+    
+    Returns
+    -------
+    f_i : Series
+        Incoming neutron intensity correction factor for the McJannet and Desilets (2023) method.
+
+    References
+    ----------
+    McJannet and Desilets (2023) : https://doi.org/10.1029/2022WR033889
+
+    """
+   
+    f_i = station_count / station_ref 
+
+    f_i = 1 / ((tau * f_i) + 1 - tau)
+    
+    return f_i
+
+#~~~~~~~ BIOMASS CORRECTION ~~~~~~~#
+
+def agb(agbval):    #not using currently as this function depends on unreliable data.
+    
     """agb Works out the effect of above ground biomass on neutron counts.
     agbval units are kg per m^2 of above ground biomass. Taken from Baatz et al
     (2015)
@@ -767,25 +1103,37 @@ def agb(agbval):
     
     return 1/(1-(0.009*agbval))
 
+#~~~~~~~ APPLY CORRECTION FACTORS ~~~~~~~#
 
-### APPLYING CORRECTION FACTORS ###
 def mod_corr(f_p, f_h, f_i, f_v, mod):
+    
     """mod_corr gives the corrected neutron count 
 
     Parameters
     ----------
-    f_p : float
-        corection factor for presure       
-    f_h : float
-        corection factor for humidity
-    f_i : float
-        corection factor for cosmic ray intensity
-    f_v : float
-        corection factor for above ground biomass
-    mod : int
-        neutron count
+    f_p : Series
+        Corection factor for presure. [Found using the function "pressure_correction()"]     
+   
+    f_h : Series
+        Corection factor for humidity. [Found using the function "humidity_correction()"]  
+    
+    f_i : Series
+        Corection factor for incoming neutron intensity. [Found using either function "intensity_correction_McJannet2023()" or "intensity_correction_Hawdon2014()"]  
+    
+    f_v : Series
+        Corection factor for above ground biomass.
+    
+    mod : Series
+        Raw (uncorrected) neutron count.
+
+        
+    Returns
+    -------
+    : Series
+        Corrected neutron count
 
     """
+    
     return mod * f_p * f_h * f_i * f_v
 
 
@@ -793,84 +1141,122 @@ def mod_corr(f_p, f_h, f_i, f_v, mod):
 #~~ (5) CALIBRATION ~~# 
 #~~~~~~~~~~~~~~~~~~~~~#
 
-#soil moisture (theta) calculation
+#soil moisture (theta) calculation. Needed for calibration process.
 def desilets_sm_calc(a0, a1, a2, bd, N, N0, lw, wsom):
     
-    """desilets soil moisture processing equation. For more info see > https://doi.org/10.1029/2009WR008726
-    This is the current standard method for soil moisture estimation in CRNS.
+    """Soil moisture processing equation for the Desilets equation.
+    This is currently the standard method for soil moisture estimation in CRNS.
 
     Parameters
     ----------
     a0 : float
         constant
+  
     a1 : float
         constant
+    
     a2 : float
         constant
+    
     bd : float
         bulk density e.g. 1.4 g/cm3
+    
     N : int
         Neutron count (corrected)
-    N0 : int
+    
+    N0 : int    
         N0 number
+    
     lw : float
         lattice water - decimal percent e.g. 0.002
+    
     wsom : float
         soil organic carbon - decimal percent e.g, 0.02
 
+    Returns
+    -------
+    sm : Series
+        Volumetric soil moisture (in cm3/cm3)
 
-    """
-    return (((a0)/((N/N0)-a1))-(a2)-lw-wsom)*bd
-
-
-def kohli_sm_calc(a0, a1, a2, bd, N, N0, lw, wsom):
-    """kohli et al. (2021) soil moisture processing equation. For more info see> https://doi.org/10.3389/frwa.2020.544847
-
-    Parameters
+        
+    References
     ----------
-    a0 : float
-        constant
-    a1 : float
-        constant
-    a2 : float
-        constant
-    bd : float
-        bulk density e.g. 1.4 g/cm3
-    N : int
-        Neutron count (corrected)
-    N0 : int
-        N0 number
-    lw : float
-        lattice water - decimal percent e.g. 0.002
-    wsom : float
-        soil organic carbon - decimal percent e.g, 0.02
-
+    Desilets et al. (2010) : https://doi.org/10.1029/2009WR008726
 
     """
-    Nmax = N0 * ( (a0+(a1*a2)) / (a2) )
-    ah0 = -a2
-    ah1 = (a1*a2)/(a0+(a1*a2))
-    sm = ((ah0 * ( (1-(N/Nmax)) / (ah1 - (N/Nmax)) )) - lw - wsom) * bd
+
+    sm = (((a0)/((N/N0)-a1))-(a2)-lw-wsom)*bd
+    
     return sm
 
 
-""" 
-Functions from Shcron et al 2017 used to calibrate the sensor
-     
-"""
+def kohli_sm_calc(a0, a1, a2, bd, N, N0, lw, wsom):
+    
+    """kohli et al. (2021) soil moisture processing equation. For more info see> 
 
+    Parameters
+    ----------
+    a0 : float
+        constant
+    
+    a1 : float
+        constant
+    
+    a2 : float
+        constant
+    
+    bd : float
+        bulk density e.g. 1.4 g/cm3
+    
+    N : int
+        Neutron count (corrected)
+    
+    N0 : int
+        N0 number
+    
+    lw : float
+        lattice water - decimal percent e.g. 0.002
+    
+    wsom : float
+        soil organic carbon - decimal percent e.g, 0.02
+
+    Returns
+    -------
+    sm : Series
+        Volumetric soil moisture (in cm3/cm3)
+
+    References
+    ----------
+    Kohli et al (2021) : https://doi.org/10.3389/frwa.2020.544847
+
+    """
+    Nmax = N0 * ( (a0 + (a1 * a2)) / (a2) )
+    ah0 = -a2
+    ah1 = (a1 * a2) / (a0 + (a1 * a2))
+    sm = ((ah0 * ( (1-(N/Nmax)) / (ah1 - (N/Nmax)) )) - lw - wsom) * bd
+   
+    return sm
+
+
+
+# ~~~~ FUNCTIONS FROM SCHRON ET AL 2017 USED TO CALIBRATE THE SENSOR ~~~~~#
+    
 # Horizontal
 def WrX(r, x, y):
-    """WrX Radial Weighting function for point measurements taken within 5m of sensor
+    
+    """Radial Weighting function for point measurements taken within 5m of sensor.
 
     Parameters
     ----------
     r : float
         rescaled distance from sensor (see rscaled function below)
+    
     x : float
         Air Humidity from 0.1 to 0.50 in g/m^3
+    
     y : float
         Soil Moisture from 0.02 to 0.50 in m^3/m^3
+
     """
 
     x00 = 3.7
@@ -907,14 +1293,17 @@ def WrX(r, x, y):
 
 
 def WrA(r, x, y):
-    """WrA Radial Weighting function for point measurements taken within 50m of sensor
+    
+    """Radial Weighting function for point measurements taken within 50m of sensor
 
     Parameters
     ----------
     r : [type]
         [description]
+    
     x : [type]
         [description]
+    
     y : [type]
         [description]
     """
@@ -951,16 +1340,20 @@ def WrA(r, x, y):
 
 
 def WrB(r, x, y):
-    """WrB Radial Weighting function for point measurements taken over 50m of sensor
+    
+    """Radial Weighting function for point measurements taken over 50m of sensor
 
     Parameters
     ----------
     r : float
         rescaled distance from sensor (see rscaled function below)
+    
     x : float
         Air Humidity from 0.1 to 0.50 in g/m^3
+    
     y : float
         Soil Moisture from 0.02 to 0.50 in m^3/m^3
+    
     """
     b00 = 39006
     b01 = 15002337
@@ -997,15 +1390,17 @@ def WrB(r, x, y):
 
 # Vertical
 def D86(r, bd, y):
-    """D86 Calculates the depth of sensor measurement (taken as the depth from which
-    86% of neutrons originate)
+    
+    """Calculates the depth of sensor measurement (taken as the depth from which 86% of neutrons originate)
 
     Parameters
     ----------
     r : float, int
         radial distance from sensor (m)
+    
     bd : float
         bulk density (g/cm^3)
+    
     y : float
         Soil Moisture from 0.02 to 0.50 in m^3/m^3
     """
@@ -1014,27 +1409,31 @@ def D86(r, bd, y):
 
 
 def Wd(d, r, bd, y):
-    """Wd Weighting function to be applied on samples to calculate weighted impact of 
-    soil samples based on depth.
+    
+    """Weighting function to be applied on samples to calculate weighted impact of soil samples based on depth.
 
     Parameters
     ----------
     d : float
         depth of sample (cm)
+    
     r : float,int
         radial distance from sensor (m)
+    
     bd : float
         bulk density (g/cm^3)
+    
     y : float
         Soil Moisture from 0.02 to 0.50 in m^3/m^3
+    
     """
-
     return(np.exp(-2*d/D86(r, bd, y)))
 
 
 # Rescaled distance
 def rscaled(r, p, y, Hveg=0):
-    """rscaled rescales the radius based on below parameters
+    
+    """Rescales the radius based on below parameters.
 
     Parameters
     ----------
@@ -1053,36 +1452,51 @@ def rscaled(r, p, y, Hveg=0):
 
 
 #calibration function
-def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end_time, config_data, calib_data_filepath):
+def n0_calibration(corrected_data, country, sitenum, defineaccuracy, calib_start_time, calib_end_time, config_data, calib_data_filepath, default_dir, sm_calc_method):
+    
     """n0_calib the full calibration process
 
     Parameters
     ----------
-    meta : dataframe
-        metadata dataframe
+    corrected_data : DataFrame
+        Corrected input data (data with corrected neutron counts)
+
     country : str
-        country of the site e.g. "USA"`
+        Country of the site
+    
     sitenum : str
-        sitenum of the site "e.g.
+        Site number.
+    
     defineaccuracy : float
-        accuracy that is desired usually 0.01
-    useeradata : bool
-        import from full process wrapper, if using era5 land data some routines are turned on
+        Accuracy that is desired usually 0.01 (default)
+    
     calib_start_time : str
         start time of the calibration period in UTC time e.g."16:00:00" 
+    
     calib_end_time : str
         end time of the calibration period in UTC time e.g."23:00:00" 
-    theta_method : str
-        choice of method to convert N/N0 to sm. Standard is "desilets" method
-    config_data : data stored in the config.json file.
-        Stores general & metadata variables required for the data processing in addition to relevant filepaths.
-    calib_filepath : str
-        file path of the calibration data
+    
+    config_data : dictionary
+        Store of variables required for the data processing. Also stores relevant filepaths.
+        
+    calib_data_filepath : str
+        File path of the calibration data.
+    
+    default_dir : str
+        Default directory for folder creation and outputs.
+
+    sm_calc_method : str
+        Must either be 'desilets' for desilets method or 'kohli' for kohli method.
+
     
     Returns
     -------
     N0: str
-        calibration value for site
+        Theoretical neutron count for dry soil conditions (the calibration value for the site)
+
+    References
+    ----------
+    Schron et al (2017) : https://doi.org/10.5194/hess-21-5009-2017
 
     """
 
@@ -1093,35 +1507,12 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
     Hveg = 0  # Hveg not used due to lack of reliable data and small impact.
 
     if math.isnan(bd):  #checking if bd value is a number.
-        print("Bulk density (bd) is nan value")
+        print("Bulk density (bd) is nan value. Please add a valid value to the config file.")
 
     """
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~ HOUSEKEEPING ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    
-    First some housekeeping - create folders for writing to later on
-    """
-    print("Creating Folders...")
-    # Create a folder name for reports and tables unique to site
-    uniquefolder = str(country) + "_SITE_" + str(sitenum) + "_N0"
-    # Change wd to folder for N0 recalib
-    os.chdir(config_data['filepaths']['default_dir'] + "/outputs/")
-    alreadyexist = os.path.exists(uniquefolder)  # Checks if the folder exists
-
-    if alreadyexist == False:
-        # Statement to manage writing a new folder or not depending on existance
-        os.mkdir(uniquefolder)
-    else:
-        pass
-
-    os.chdir(config_data['filepaths']['default_dir'])  # Change back to main wd
-    print("Done")
-
-    """
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~ CALIBRATION DATA READ AND TIDY ~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~ CALIBRATION DATA READ AND TIDY ~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
     Read in the calibration data and do some tidying to it
     """
@@ -1137,23 +1528,22 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
     print("Done")
 
     """
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~ FINDING RADIAL DISTANCES OF MEASUREMENTS ~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~ FINDING RADIAL DISTANCES OF MEASUREMENTS ~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
     Using the LOC column which combines directional heading and radial
     distance from sensor. It splits this column to give raidal distance
     in metres.
     
-    Try/except introduced as sometimes direction isn't available.
     """
     
     df['DIST'] = df['DIST'].astype(float)  # dtype is float
 
     """
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~ PROVIDE A SINGLE NUMBER FOR DEPTH ~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~ PROVIDE A SINGLE NUMBER FOR DEPTH ~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
     Calibration data has the depth given as a range in meters. For easier
     handling this is converted into an average depth of the range.
@@ -1163,13 +1553,13 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
     df['DEPTH_AVG'] = df['DEPTH_AVG'].astype(float)
 
     """
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~ SEPERATE TABLES FOR EACH CALIB DAY ~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~ SEPERATE TABLES FOR EACH CALIB DAY ~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
-    It will look at the number of unique days identified above. It will then create
-    seperate tables for each calibration day. 
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
+    It will look at the number of unique days identified above. 
+    It will then create seperate tables for each calibration day. 
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     """
     # Numdays is a number from 1 to n that defines how many calibration days there are.
     numdays = len(unidate)
@@ -1180,16 +1570,17 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
         dfCalib[i] = df.loc[df['DATE'] == unidate[i]]
 
     """
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~~~ AVERAGE PRESSURE FOR EACH CALIB DAY ~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~ AVERAGE PRESSURE FOR EACH CALIB DAY ~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
     We need average pressure for the functions further down the script. This will 
-    find the average pressure - obtained from the level 1 data
+    find the average pressure.
     """
-    #says level 1 but dans called in tidy data ??
-    lvl1 = pd.read_csv(config_data['filepaths']['default_dir']+"/outputs/data/"+country+"_SITE_"+sitenum+"_tidy.txt", sep='\t')
-    
+
+    #call in corrected CRNS data
+    corrected_data = corrected_data.replace(int(config_data['general']['noval']), np.nan)   #first must make sure -999s are converted to nan values.
+    lvl1 = corrected_data #renamed the corrected CRNS data to lvl1 for short
     lvl1['DATE'] = pd.to_datetime(lvl1['DT'], yearfirst=True)  # Use correct formatting
     lvl1['DATE'] = lvl1['DATE'].dt.date     # Remove the time portion
     
@@ -1200,7 +1591,6 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
     else:
         isrh = True
    
-    
     lvl1[lvl1 == int(config_data['general']['noval'])] = np.nan
 
     # Creates dictionary of dfs for calibration days found
@@ -1286,9 +1676,9 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
 
 
     """
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~ THE BIG ITERATIVE LOOP - CALCULATE WEIGHTED THETA ~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~ THE BIG ITERATIVE LOOP - CALCULATE WEIGHTED THETA ~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
     Below is the main loop that will iterate through the process oultined by 
     Schron et al., (2017). It iterates the weighting procedure until the defined
@@ -1305,7 +1695,7 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
         df1 = pd.DataFrame.from_dict(dfCalib[i])
         df1['SWV'] = pd.to_numeric(df1['SWV'], errors='coerce') #coerce non numeric values to nan values
         if df1['SWV'].mean() > 1:
-            print("crspy has detected that your volumetric soil water units (in the calibration data) are not in decimal format and so has divided them by 100. If this is incorrect please adjust the units and reprocess your data")
+            print("crspy-lite has detected that your volumetric soil water units (in the calibration data) are not in decimal format and so has divided them by 100. If this is incorrect please adjust the units and reprocess your data")
             # added to convert - handled with message plus calc
             df1['SWV'] = df1['SWV']/100
 
@@ -1333,10 +1723,10 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
             # Initial Theta
             thetainitial = CalibTheta  # Save a copy for comparison
             """
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            ~~~~~~~~~~~~~~~~~~~~~ DEPTH WEIGHTING ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            ~~~~~~~~~~~~~~~ DEPTH WEIGHTING ~~~~~~~~~~~~~~~~~
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
             According to Schron et al., (2017) the first thing to do is find the 
             weighted average for each profile. This is done 
             """
@@ -1365,9 +1755,9 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
            
 
             """
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            ~~~~~~~~~~~~~~ ABSOLUTE HUMIDITY CALULCATION ~~~~~~~~~~~~~~~~~~~~~~~~~~
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            ~~~~~~~~~~~~ ABSOLUTE HUMIDITY CALULCATION ~~~~~~~~~~~~~~
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             
             Need to provide absolute air humidity for each calibration day. This will be 
             taken from data (vapour pressure and temperature) for the USA sites. 
@@ -1378,10 +1768,8 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
                 day1temp = avgT[i]
                 day1rh = avgRH[i]
                 day1es = es(day1temp)
-                day1es = day1es*100 # convert to Pa
                 day1ea = ea(day1es, day1rh)
                 day1hum = pv(day1ea, day1temp)
-                day1hum = day1hum * 1000
 
             else:
                 day1temp = avgT[i]
@@ -1405,9 +1793,9 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
             depthdf['Wr'] = "NaN"  # set up column
 
             """
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            ~~~~~~~~~~~~~~~~~~~~ RADIAL WEIGHTING ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            ~~~~~~~~~~~~~ RADIAL WEIGHTING ~~~~~~~~~~~~~~~~~
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             
             Once each profile has a depth averaged value, and we have the absolute
             humidity, we can begin to find the final weighted value of theta. Three
@@ -1434,34 +1822,24 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
 
 
             """
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            ~~~~~~~~~~~~~~~~~~~~ WRITE TABLES ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            
-            The weighted tables are written to a folder for checking later. This is
-            to ensure that the code has worked as expected and now crazy values are
-            found.
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            ~~~~~~~~~~~~~~ WRITE TABLES ~~~~~~~~~~~~~~~~~
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            Can output the radius weighting and depth weighting here by uncommenting the two lines below.
             """
-            # Below code will write the tables into the unique folder for checking
-            # They will overwrite each time
-            os.chdir(config_data['filepaths']['default_dir'] + "/outputs/" + uniquefolder)  # Change wd
-            
-            depthdf.to_csv(country + '_SITE_'+ sitenum +   # Write the radial table
-                           '_RadiusWeighting' + str(unidate[i]) + '.csv', header=True, index=False,  mode='w')
-            
-            df1.to_csv(country + '_SITE_'+ sitenum +          # Write the depth table
-                       '_DepthWeighting' + str(unidate[i]) + '.csv', header=True, index=False,  mode='w')
-           
-            os.chdir(config_data['filepaths']['default_dir'])  # Change wd back
+            os.chdir(default_dir + "/outputs/data")
+            #depthdf.to_csv(country + '_SITE_'+ sitenum + '_RadiusWeighting' + str(unidate[i]) + '.csv', header=True, index=False,  mode='w')  
+            #df1.to_csv(country + '_SITE_'+ sitenum + '_DepthWeighting' + str(unidate[i]) + '.csv', header=True, index=False,  mode='w')
+            os.chdir(default_dir)
 
             Accuracy = abs((CalibTheta - thetainitial) / thetainitial)  # Calculate new accuracy
        
         print("Done")
 
     """
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~ OPTIMISED N0 CALCULATION ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~ OPTIMISED N0 CALCULATION ~~~~~~~~~~~~~~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
     We now check the optimal N0 value for this sensor. This is completed by iterating
     through calculations of soil moisture for each calibration date with the N0 value
@@ -1474,15 +1852,13 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
     
     """
     print("Finding Optimised N0......")
-    tmp = pd.read_csv(config_data['filepaths']['default_dir'] + '/outputs/data/' + country + '_SITE_'+sitenum+'_level1.txt', sep='\t')
-    
-    # Use correct formatting - MAY NEED CHANGING AGAIN DUE TO EXCEL
-    tmp = tmp.replace(int(config_data['general']['noval']), np.nan)
 
-    #n_max = tmp['MOD_CORR'].max()
-    tmp['MOD_CORR'] = tmp['MOD_CORR'].replace([np.inf, -np.inf], np.nan)  #brought in to avoid infinite values bug 
+    tmp = corrected_data   #temporary df of the corrected data.
+    tmp = tmp.replace(int(config_data['general']['noval']), np.nan) #make sure -999s are nan values.
+    tmp['MOD_CORR'] = tmp['MOD_CORR'].replace([np.inf, -np.inf], np.nan)  #brought in to avoid infinite values bug
+    tmp['MOD_CORR'] = pd.to_numeric(tmp['MOD_CORR'], errors='coerce')   #make sure missing data is 'coerced' to nan values 
     n_avg = (np.nanmean(tmp['MOD_CORR']))
-
+  
     if np.isnan(n_avg) or np.isinf(n_avg):
         print("Error: MOD_CORR contains only NaN values or results in infinity.")
         n_avg = 0  # or any other default value you want to use
@@ -1507,15 +1883,12 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
         # Create a dictionary df of neutron time series data for each calibration day
         tmpneut = tmp.loc[tmp['DATE'] == unidate[i]]
 
-
         NeutCount[i] = tmpneut
 
-        # Write a csv for the error for this calibration day
-        os.chdir(config_data['filepaths']['default_dir'] + "/outputs/" + uniquefolder)  # Change wd to folder
-
-        tmpneut.to_csv(country + '_SITE_'+sitenum+'_MOD_AVG_TABLE_' + str(unidate[i]) + '.csv', header=True, index=False,  mode='w')
-        
-        os.chdir(config_data['filepaths']['default_dir'])  # Change back
+        #Optional output - uncomment below if you wish to see the result.
+        os.chdir(default_dir + "/outputs/data")
+        #tmpneut.to_csv(country + '_SITE_'+sitenum+'_MOD_AVG_TABLE_' + str(unidate[i]) + '.csv', header=True, index=False,  mode='w')
+        os.chdir(default_dir)
 
     avgN = dict()
     for i in range(len(NeutCount)):
@@ -1524,6 +1897,8 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
         tmp = tmp[(tmp['DT'] > str(unidate[i])+' '+str(calib_start_time)) & (tmp['DT']
                                                                <= str(unidate[i])+' '+str(calib_end_time))]  # COSMOS time of Calib
         check = float(np.nanmean(tmp['MOD_CORR']))
+        
+
        # Need another catch to stop errors with missing data
         if np.isnan(check):
             # Find the daily mean neutron count for each calibration day
@@ -1543,30 +1918,37 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
             sm = pd.DataFrame(columns=['sm'])
             reler = pd.DataFrame(columns=['RelErr'])
 
-            for j in range(len(N0)):
+            if sm_calc_method == 'desilets':
 
-                sm.loc[j] = desilets_sm_calc(float(config_data['general']['a0']), float(config_data['general']['a1']), float(config_data['general']['a2']), 
-                                        bd, Nave, N0.loc[j], lw, soc)
+                for j in range(len(N0)):
+
+                    sm.loc[j] = desilets_sm_calc(float(config_data['general']['a0']), float(config_data['general']['a1']), float(config_data['general']['a2']), 
+                                            bd, Nave, N0.loc[j], lw, soc)
                 
-                sm.loc[j] = ((float(config_data['general']["a0"]) / ((Nave / N0.loc[j]) -
-                                        float(config_data['general']["a1"]))) - float(config_data['general']["a2"]) - lw - soc) * bd
-                tmp = sm.iat[j, 0]
-                # Accuracy normalised to vwc
-                # reler.loc[j] = abs((sm.iat[j, 0] - vwc)/vwc)
-                # Accuracy not normalised to vwc
-                reler.loc[j] = abs(sm.iat[j, 0] - vwc)
-          
+                    tmp = sm.iat[j, 0]
+                    reler.loc[j] = abs(sm.iat[j, 0] - vwc)
+
+                
+            elif sm_calc_method == 'kohli':
+                
+                for j in range(len(N0)):
+                
+                    sm.loc[j] = kohli_sm_calc(float(config_data['general']['a0']), float(config_data['general']['a1']), float(config_data['general']['a2']), 
+                                            bd, Nave, N0.loc[j], lw, soc)
+                
+                    tmp = sm.iat[j, 0]
+                    reler.loc[j] = abs(sm.iat[j, 0] - vwc)
+            else:
+                KeyError("No other method to calculate soil moisture at this time. Please use either 'desilets' or 'kohli' method.")
+                
 
             RelerrDict[i] = reler['RelErr']
 
-            # Write a csv for the error for this calibration day
-            os.chdir(config_data['filepaths']['default_dir'] + "/outputs/" + uniquefolder)  # Change wd to folder
-
+            # Optional output for the calibration error
+            os.chdir(default_dir + "/outputs/data")
             reler['N0'] = range(n_avg, int(n_avg*2.5))  # Add N0 for csv write
-
-            reler.to_csv(country + '_SITE_'+sitenum+'_error_' + str(unidate[i]) + '.csv',
-                        header=True, index=False,  mode='w')
-            os.chdir(config_data['filepaths']['default_dir'])  # Change back
+            #reler.to_csv(country + '_SITE_'+sitenum+'_error_' + str(unidate[i]) + '.csv',header=True, index=False,  mode='w')
+            os.chdir(default_dir)
 
     """
                         N0 Optimisation
@@ -1582,31 +1964,28 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
     for i in range(len(unidate)-1):
         # Create a tmp series of the next calibration day
         tmp = RelerrDict[i+1]
-        # Sum these together for total mea (will continue until all days are summed)
+        # Sum these together for total mean (will continue until all days are summed)
         totalerror = totalerror+tmp
 
     minimum_error = min(totalerror)  # Find the minimum error value and assign
 
     totalerror = totalerror.to_frame()
     totalerror['N0'] = range(n_avg, int(n_avg*2.5))
+    
     # Create object that maintains the index value at min
     minindex = totalerror.loc[totalerror.RelErr == minimum_error]
-    print("Done")
-    # Show the minimum error value with the index valu. Index = N0
-    #print(minindex)
-    #print(minindex['RelErr'])
-    #print(minindex['N0'])
     N0 = minindex['N0'].item()
-
-    plt.plot(totalerror['RelErr'])
+    
+    #plotting the relative error for each value of N0 - the lowest error should indicate the true N0 value for the calibration!
+    plt.plot(totalerror['N0'], totalerror['RelErr'])    
     plt.yscale('log')
     plt.xlabel('N0')
     plt.ylabel('Sum Relative Error (log scale)')
     plt.title('Sum Relative Error plot on log scale across all calibration days')
     plt.legend()
-    os.chdir(config_data['filepaths']['default_dir'] + "/outputs/" + uniquefolder)  # Change wd to folder
-    plt.savefig("Relative_Error_Plot.png")
-    os.chdir(config_data['filepaths']['default_dir'])
+    os.chdir(default_dir + "/outputs/figures")  # Change wd to folder
+    plt.savefig(country+"_"+sitenum+"Relative_Error_Plot.png")
+    os.chdir(default_dir)
     plt.close()
 
     """
@@ -1626,10 +2005,8 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
     
     """
 
-    N0R = "The optimised N0 is calculated as: \nN0   |  Total Relative Error  \n" + \
-        str(minindex)
-    R1 = "The site calibrated was site number " + sitenum + \
-        " in  " + str(country) + " and the name is " + str(config_data['metadata']['sitename'])
+    N0R = "The optimised N0 is calculated as: \nN0   |  Total Relative Error  \n" + str(minindex)
+    R1 = "The site calibrated was site number " + sitenum + " in  " + str(country) + " and the name is " + str(config_data['metadata']['sitename'])
     R2 = "The bulk density was " + str(bd)
     R3 = "The vegetation height was " +str(Hveg)+ " (m)"
     R4 = "The user defined accuracy was "+str(defineaccuracy)
@@ -1641,31 +2018,31 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
         AvgTheta)
     R8 = "Please see the additional tables which hold calculations for each calibration date"
 
-    # Make a folder for the site being processed
-    os.chdir(config_data['filepaths']['default_dir'] + "/outputs/" +uniquefolder)  # Change wd to folder
-
-    # Write the user report file below
+    os.chdir(default_dir + "/outputs/data")
+    # Write the user report to the file below
     f = open(country + "_"+sitenum+"_Report.txt", "w")
     f.write(N0R + '\n\n' + R1 + '\n' + R2 + '\n' + R3 + '\n' + R4 + '\n' + R5 + '\n' + R6 + '\n' +
             '\n \n' + R7 + '\n\n' + RAvg + '\n \n' + Rtheta + '\n \n' + R8)
     f.close()
 
-    # Write total error table
+    # Write total error table - optional output, uncomment below.
     totalerror = pd.DataFrame(totalerror)
     totalerror['N0'] = range(n_avg, int(n_avg*2.5))
-    totalerror.to_csv(country + '_SITE_'+sitenum +'totalerror.csv', header=True, index=False,  mode='w')
-
-    os.chdir(config_data['filepaths']['default_dir'])  # Change back
+    #totalerror.to_csv(country+'_SITE_'+sitenum +'totalerror.csv', header=True, index=False,  mode='w')
+    os.chdir(default_dir)
 
     config_data['metadata']['n0'] = N0
     #save n0 input to config file
-    config_file = "config_files/config.json"
+    config_file = "inputs/config.json"
     with open(config_file, "w") as file:
         json.dump(config_data, file, indent=4)
+   
     print("Calibration successful. N0 = "+str(N0))
 
-    return N0
+    print("N0 for " + str(unidate) + "data = " + str(N0))
+    input()
 
+    return N0
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~#
@@ -1673,26 +2050,37 @@ def n0_calibration(country, sitenum, defineaccuracy, calib_start_time, calib_end
 #~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
 def flag_and_remove(df, N0, country, sitenum, config_data):
-    """flag_and_remove identifies data that should be flagged based on the following criteria and removes it:
+    
+    """This function identifies erroneous data that should be flagged and removed based upon the following criteria :
+    
     Flags:
         1 = fast neutron counts more than 20% difference to previous count
-        2 = fast neutron counts less than the minimum count rate (default == 30%, can be set in namelist)
+        2 = fast neutron counts less than the minimum count rate (default == 30%, can be edited in the config.json file)
         3 = fast neutron counts more than n0
         4 = battery below 10v
-
 
     Parameters
     ----------
     df : dataframe
         dataframe of the CRNS data
-    N0 : int
-        N0 number
+    
+    N0: int
+        Theoretical neutron count for dry soil conditions (the calibration value for the site)
+    
     country : str
-        string of country e.g. "USA"
+        Country of sensor
+    
     sitenum : str
-        string o sitenum e.g. "011"
-    config_data : data stored in the config.json file.
-        Stores general & metadata variables required for the data processing in addition to relevant filepaths.
+        Site number
+    
+    config_data : dictionary
+        Store of variables required for the data processing. Also stores relevant filepaths.
+
+        
+    Returns
+    -------
+    df : DataFrame
+        Quality controlled DataFrame for the site.
 
     """
 
@@ -1795,21 +2183,68 @@ def flag_and_remove(df, N0, country, sitenum, config_data):
 #~~ (7) SOIL MOISTURE ESTIMATION ~~# 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
-def thetaprocess(df, country, sitenum, N0, theta_method, config_data):
+def mod_error(mod):
     
-    """thetaprocess takes the dataframe provided by previous steps and uses the theta calculations
+    """Function to calculate the error of the neutron counts (based upon the coefficient of variation). 
+    This function is required to estimate the soil moisture error, calculated in the function "thetaprocess()".
+
+    Parameters
+    ----------
+    mod : Series
+        nuetron count (uncorrected)
+        
+
+    Returns
+    -------
+    mod_err : Series
+        Estimated error.
+
+    """
+
+    m = mod.mean()  #mean
+    sd = (abs(mod)).apply(np.sqrt)  #standard deviation
+    cv = sd / m  #coefficient of variation
+    mod_err = mod * cv
+
+    return mod_err
+
+
+def sm_max_calc(bd, density):
+    
+    """Calculates a theoretical maximum of soil moisture for a site. This is based upon the bulk density.
+
+    Parameters
+    ----------
+    bd : float
+        bulk density
+        
+    density : float
+        density
+
+    Returns
+    -------
+    sm_max : float
+        Maximum value of soil moisture for the site.
+    
+    """
+
+    sm_max = (1-(bd/density)) 
+
+    return sm_max
+
+
+def thetaprocess(df, country, sitenum, N0, sm_calc_method, config_data, default_dir):
+    
+    """This function takes the dataframe provided by the previous steps and uses the theta calculations
     to give an estimate of soil moisture. 
 
-    Soil moisture can be estimated with the desilet or kohli equations. See desilets_sm_calc 
-    and kohli_sm_calc functions for more info.
-
-    Constants are taken from meta data which is identified using the "country" and "sitenum"
-    inputs. 
+    Soil moisture can be estimated with either the desilets or kohli equation. See the crspy-lite functions "desilets_sm_calc()" 
+    and "kohli_sm_calc()" functions for more detail on what these are and how they are different.
 
     Realistic values are provided by constraining soil moisture estimates to physically possible values.
-        i.e. Nothing below 0 and max values based on porosity at site.
+        i.e. A minimum & maximum value are determined (A minimum of 0 and a maximum value based on the porosity at a site).
 
-    Provides an estimated depth of measurement using the D86 function from Shcron et al., (2017)
+    The function also provides an estimated depth of measurement using the D86 function from Shcron et al., (2017)
 
     Gives running averages of measurements using a 12 hour window. To handle missing 
     data a minimum of 6 hours of data per 12 hour window is required, otherwise one
@@ -1819,80 +2254,75 @@ def thetaprocess(df, country, sitenum, N0, theta_method, config_data):
     ----------
     df : dataframe 
         dataframe of CRNS data
-    meta : dataframe
-        dataframe of metadata
+   
     country : str
-        country e.g. "USA"
-    sitenum : str  
-        sitenum e.g. "011"
-    config_data : data stored in the config.json file.
-        Stores general & metadata variables required for the data processing in addition to relevant filepaths.
+        Country of sensor
+    
+    sitenum : str
+        Site number
+    
+    N0: int
+        Theoretical neutron count for dry soil conditions (the calibration value for the site)
+
+    sm_calc_method: str
+        Must either be 'desilets' for desilets method or 'kohli' for kohli method.
+        
+    config_data : dictionary
+        Store of variables required for the data processing. Also stores relevant filepaths.
+
+    default_dir : str
+        Default directory for folder creation and outputs.
+        
+
+    Returns
+    -------
+    df : DataFrame
+        Final DataFrame for the site. Includes columns for estimated soil moisture, soil moisture error and effective depth. 
+
+        
+    References
+    ----------
+    Desilets et al. (2010) : https://doi.org/10.1029/2009WR008726
+    
+    Kohli et al (2021) : https://doi.org/10.3389/frwa.2020.544847
+
+    Schron et al (2017) : https://doi.org/10.5194/hess-21-5009-2017
+    
     """
     
     df.replace({config_data['general']['noval']: np.nan})
     
-    #################
-    ### CONSTANTS ###
-    #################
-    
+    #~~~~~ CONSTANTS ~~~~~#
+
     #reading in constants
     lw = float(config_data['metadata']['lw'])
     soc = float(config_data['metadata']['soc'])
     bd = float(config_data['metadata']['bd'])
-    N0 = float(config_data['metadata']['n0'])
-    
-    #finding maximum soil moisture through either metadata or using bulk density, bd.
-    def sm_max_calc(bd, density):
-       
-        """sm_max calculation using bulk density
+    N0 = float(config_data['metadata']['n0'])              
 
-        Parameters
-        ----------
-        bd : float
-            bulk density
-            
-        density : float
-            density
+    #setting maximum value of soil moisture
+    if config_data['metadata']['sm_max'] is None:
+        
+        print("No maximum soil moisture value found in config.json file. Calculating sm_max from bulk density data...")
+        sm_max = sm_max_calc(bd=bd, density=float(config_data['general']['density']))
+        print("Done.")
+        config_file = default_dir + "/inputs/config.json"
+        config_data['metadata']['sm_max'] = round(sm_max, (4))
+        with open(config_file, "w") as file:
+            json.dump(config_data, file, indent=4)
 
-        """
-        return (1-(bd/density))               
-
-    try:
+    else:
+        
         sm_max = float(config_data['metadata']['sm_max'])
-        if sm_max.isnumeric() or (sm_max.count('.') == 1):
-            print("SM_max in metadata. Using this value")
-            
-        else:
-            print("No maximum soil moisture value found in metadata. Calculating SM_max from bulk density data.")
-            sm_max = sm_max_calc(bd=bd,density=float(config_data['general']['density'])) 
-    except:
-        print("No maximum soil moisture value found in metadata. Calculating SM_max from bulk density data.")
-        sm_max = sm_max_calc(bd=bd,density=float(config_data['general']['density']))
+        print("Maximum soil moisture value aquired from metadata.")
         
     # convert SOC to water equivelant (see Hawdon et al., 2014)
     wsom = soc * 0.556
-    sm_min = 0  # Cannot have less than zero
     
-    ###################
-    ### IMPORT DATA ###
-    ###################
+    #setting minimum value of soil moisture
+    sm_min = 0  
     
-    #defining MOD_ERR#
-    def mod_error(mod):
-       
-        """sm_max calculation using bulk density
-
-        Parameters
-        ----------
-        mod : int
-            nuetron count (uncorrected)
-            
-        """
-        m = mod.mean()  #mean
-        sd = (abs(mod)).apply(np.sqrt)  #standard deviation
-        cv = sd / m  #coefficient of variation
-        mod_err = mod * cv
-        return mod_err
+    #~~~~~ ESTIMATING ERROR IN NEUTRON COUNTS ~~~~~#
   
     df['MOD_ERR'] = round(mod_error(mod = df['MOD']))
     
@@ -1902,7 +2332,9 @@ def thetaprocess(df, country, sitenum, N0, theta_method, config_data):
     df['MOD_CORR_PLUS'] = df['MOD_CORR'] + df['MOD_ERR']
     df['MOD_CORR_MINUS'] = df['MOD_CORR'] - df['MOD_ERR']
     
-    if theta_method == "desilets":
+    #~~~~~ SOIL MOISTURE CALC ~~~~~#
+
+    if sm_calc_method == "desilets":
         
         # Calculating soil moisture for MOD_CORR, +MOD_ERR and -MOD_ERR. Note inverse relationship so use MOD minus for soil moisture positive Error)
         
@@ -1921,7 +2353,8 @@ def thetaprocess(df, country, sitenum, N0, theta_method, config_data):
         
         df['SM_MINUS_ERR'] = abs(df['SM_MINUS_ERR'] - df['SM'])
     
-    elif theta_method == "kohli":
+
+    elif sm_calc_method == "kohli":
 
         # Exact same sm and sm error calculation process as the desilets method. The only difference is in the processing equation.
         
@@ -1943,7 +2376,7 @@ def thetaprocess(df, country, sitenum, N0, theta_method, config_data):
         df['SM_MINUS_ERR'] = abs(df['SM_MINUS_ERR'] - df['SM'])   
 
     else:
-        print("No other method to calculate soil moisture at this time. Please use either 'desilets' or 'kohli' method.")
+        KeyError("No other method to calculate soil moisture at this time. Please use either 'desilets' or 'kohli' method.")
 
     # Remove values above or below max and min vols
     df.loc[df['SM'] < sm_min, 'SM'] = 0
@@ -1961,9 +2394,8 @@ def thetaprocess(df, country, sitenum, N0, theta_method, config_data):
     print("Averaging and writing table...")
     df['SM_12h'] = df['SM'].rolling(int(config_data['general']['smwindow']), min_periods=6).mean()
 
-    ### EFFECTIVE DEPTH ###
-
-    # Depth calcs - use new Schron style. Depth is given considering radius and bd   
+    #~~~~~ EFFECTIVE DEPTH ~~~~~~#
+    # Depth calcs - using Schron et al (2017). Depth is given considering radius and bd   
     
     hveg=0 #setting height of vegetation to 0 as we assume its effect is negligible on the sensor depth. 
     
@@ -1983,13 +2415,22 @@ def thetaprocess(df, country, sitenum, N0, theta_method, config_data):
     df['D86avg'] = (df['D86_10m'] + df['D86_75m'] + df['D86_150m']) / 3
     df['D86avg_12h'] = df['D86avg'].rolling(window=int(config_data['general']['smwindow']), 
                                             min_periods=6).mean()  
-    # Replace nans with -999
-    df.fillna(int(config_data['general']['noval']), inplace=True)  
-    df = df.round(3)
-    df = df.drop(['rs10m', 'rs75m', 'rs150m', 'D86_10m','D86_75m',
-                  'D86_150m', 'SM_RAW', 'MOD_CORR_PLUS', 'MOD_CORR_MINUS'], axis=1)
+    
+    #~~~ FINAL TIDY OF DF ~~~#
+    df.fillna(int(config_data['general']['noval']), inplace=True)  # Replace nans with -999
+    df = df.round(3)    #round df
+    df[['MOD', 'MOD_CORR']] = (df[['MOD', 'MOD_CORR']]).round().astype(int) #neutron counts must be integers
+    df['DATETIME'] = df['DT']   #expand DT name back out to DATETIME
+    #select & reorder cols
+    final_order_of_cols = ['DATETIME', 'MOD', 'PRESS', 'TEMP', 'E_RH', 'I_RH', 'BATT', 'RAIN',     
+                           'F_PRESSURE', 'F_HUMIDITY', 'F_INTENSITY', 'F_VEGETATION', 'MOD_CORR',
+                           'FLAG', 'SM', 'D86avg', 'MOD_ERR', 'SM_PLUS_ERR', 'SM_MINUS_ERR', 'SM_12h', 'D86avg_12h']
+    df = df[final_order_of_cols]       
+    
     print("Done")
 
     return df
+
+
 
 
