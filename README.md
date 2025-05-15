@@ -1,4 +1,4 @@
-<img src="assets/logo.png" alt="crspy-lite logo" width="250"/>
+<img src="assets/logo.png" alt="crspy-lite logo" width="300"/>
 
 Cosmic-Ray neutron Sensing PYthon tool lite edition (**crspy-lite**): A Cosmic-Ray Neutron Sensing (**CRNS**) processing tool for soil moisture estimation.
 
