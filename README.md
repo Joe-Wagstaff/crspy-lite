@@ -52,7 +52,7 @@ Once crspy-lite is run, all time-series outputs are saved to `"\your-folder\outp
 
 Please use the links below to see examples of using crspy-lite:
 
-* Test data and metdata (maybe a config file)
+* No examples at present. 
 
 
 ## Author
