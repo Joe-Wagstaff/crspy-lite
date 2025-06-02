@@ -32,10 +32,10 @@ pip install --upgrade crspy_lite
 
 ## Running crspy-lite
 
-To run the code you need only 2 things: (i) **Input time-series data** from the CRNS, and (ii) a list of **metadata variables**. For information on the format and requirements of these please go to the wiki pages [Input Timeseries Data](https://github.com/Joe-Wagstaff/crspy-lite/wiki/Input-Timeseries-Data) and [Metadata Input](https://github.com/Joe-Wagstaff/crspy-lite/wiki/Metadata-Input) respectively. To then process and visualise your data in the working directory (wd) simply open terminal and type:
+To run the code you need only 2 things: (i) **Input time-series data** from the CRNS, and (ii) a list of **metadata variables**. For information on the format and requirements of these please go to the wiki pages [Input Timeseries Data](https://github.com/Joe-Wagstaff/crspy-lite/wiki/Input-Timeseries-Data) and [Metadata Input](https://github.com/Joe-Wagstaff/crspy-lite/wiki/Metadata-Input) respectively. To then process and visualise your data (from the working directory) simply open terminal and type:
 
 ```bash
-crspy_lite wd
+crspy_lite
 ```
 
 Or to specify the directory where outputs are stored (as opposed to the working directory that is the default), navigate to your chosen folder and Press Ctrl + Shift + C to copy the full path. Then paste this into the terminal after "crspy_lite" as exemplified below:
