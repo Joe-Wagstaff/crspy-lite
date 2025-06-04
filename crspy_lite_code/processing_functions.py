@@ -287,12 +287,12 @@ def flip_df(df):
         Flipped DataFrame.
 
     """
-    df['DATETIME'] = pd.to_datetime(df['DATETIME'], format='mixed')
-    df.set_index(df['DATETIME'], inplace=True)
+    #df['DATETIME'] = pd.to_datetime(df['DATETIME'], format='mixed')
 
-    if df['DATETIME'].iloc[0] > df['DATETIME'].iloc[-1]:    #is the first date greater than the last date?
+    # Check if the first date is after the last date
+    if df['DATETIME'].iloc[0] > df['DATETIME'].iloc[-1]:
         
-        df = df.iloc[::-1]  #if so, this line reorders the rows
+        df = df.iloc[::-1].reset_index(drop=True)
 
     else:
         pass
@@ -328,8 +328,15 @@ def resample_to_hourly(df):
     df[sum_cols] = df[sum_cols].apply(pd.to_numeric, errors='coerce')
     df[mean_cols] = df[mean_cols].apply(pd.to_numeric, errors='coerce')
     
+    # Resample: get count of records per hour for sum columns
+    df_sum_counts = df[sum_cols].resample('h').count()
+    # Resample: compute sum for sum columns
     df_sum = df[sum_cols].resample('h').sum()
+    # Replace sum values with NaN where there were no records
+    df_sum[df_sum_counts == 0] = pd.NA
+    # Resample: compute mean for mean columns (missing hours will naturally be NaN)
     df_mean = df[mean_cols].resample('h').mean()
+        
 
     df_resampled = pd.concat([df_sum, df_mean], axis=1) #doesn't work if you concat df, need to create a new dataframe
     df_resampled.reset_index(inplace=True)  #resets the index, moving 'TIME' back to the cols
@@ -2361,6 +2368,5 @@ def thetaprocess(df, N0, sm_calc_method, config_data, default_dir):
     print("Done")
 
     return df
-
 
 
