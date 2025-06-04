@@ -13,10 +13,10 @@ import pandas as pd
 import argparse
 
 #crspy-lite processing functions
-from crspy_lite_code import processing_functions as pf
+import processing_functions as pf
 
 #crspy-lite visualisation functions
-from crspy_lite_code import visualisation_functions as vf
+import visualisation_functions as vf
 
 
 # Check user Python version
@@ -75,6 +75,11 @@ def full_process_wrapper(default_dir):
     except json.JSONDecodeError:
         print(f"Error: The file '{config_file}' is not a valid JSON file.")
 
+    #add default_dir to config file
+    config_data['filepaths']['default_dir'] = default_dir
+    with open(config_file, "w") as file:
+        json.dump(config_data, file, indent=4)
+
     #~~~~~~~~~~~~~~~~~~~~~~~~~~#
     #~~ (2) RAW DATA TIDYING ~~#
     #~~~~~~~~~~~~~~~~~~~~~~~~~~#
@@ -106,6 +111,7 @@ def full_process_wrapper(default_dir):
     pf.prepare_data(df=raw_data, config_data=config_data) #fixes input data to counts on the hour.
     
     tidy_data = raw_data #assign tidied df a new name: 'tidy_data'
+
 
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
     #~~ (3) DATA IMPORTS & CALCULATION ~~# 
@@ -263,17 +269,3 @@ def full_process_wrapper(default_dir):
 
 
     return
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Run CRSPY Lite processing.")
-    parser.add_argument("default_dir", help="File directory you wish to run the crspy_lite from")
-    args = parser.parse_args()
-
-    full_process_wrapper(args.default_dir)
-
-if __name__ == "__main__":
-    main()
-
-
-
